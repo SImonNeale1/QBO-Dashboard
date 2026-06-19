@@ -58,3 +58,22 @@ usersRouter.get('/me', (req, res) => {
     role:     req.session.role,
   });
 });
+
+// ✅ TEMP: create CEO user (delete after use)
+usersRouter.get('/setup-ceo', async (req, res) => {
+  const hash = await bcrypt.hash('password123', 10);
+
+  try {
+    const stmt = `
+      INSERT INTO users (username, password, role)
+      VALUES ('ceo', '${hash}', 'ceo')
+    `;
+    req.app.locals.db.prepare(stmt).run();
+
+    res.send('✅ CEO user created');
+  } catch (err) {
+    console.error(err);
+    res.send('User may already exist');
+  }
+});
+

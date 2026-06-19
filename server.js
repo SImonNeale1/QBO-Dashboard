@@ -2,7 +2,6 @@
 import express from 'express';
 import cors from 'cors';
 import session from 'express-session';
-import connectSqlite3 from 'better-sqlite3-session-store';
 import dotenv from 'dotenv';
 
 import db from './lib/db.js';
@@ -19,9 +18,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ✅ FIXED SQLite session store
-const SQLiteStore = connectSqlite3(session);
-
+// ✅ CORS
 app.use(cors({
   origin: process.env.DASHBOARD_ORIGIN || 'http://localhost:5173',
   credentials: true,
@@ -29,10 +26,8 @@ app.use(cors({
 
 app.use(express.json());
 
+// ✅ SIMPLE SESSION (NO SQLITE STORE)
 app.use(session({
-  store: new SQLiteStore({
-    client: db,
-  }),
   secret: process.env.SESSION_SECRET || 'change-me-in-production',
   resave: false,
   saveUninitialized: false,
@@ -43,7 +38,7 @@ app.use(session({
   },
 }));
 
-// ✅ SIMPLE TEST ROUTE (fixes Render "loading" issue)
+// ✅ TEST ROUTE
 app.get('/', (_req, res) => {
   res.send('✅ QBO Dashboard backend is running');
 });
@@ -62,7 +57,8 @@ app.use('/api', requireAuth, tokenRefresher, apiRouter);
 app.use('/api/sales', requireAuth, tokenRefresher, salesRouter);
 app.use('/api/budget', requireAuth, tokenRefresher, budgetRouter);
 
-// ✅ IMPORTANT: must use process.env.PORT
+// ✅ Start server
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
+

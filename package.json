@@ -18,7 +18,4 @@
     "express":                     "^4.19.2",
     "express-session":             "^1.18.0"
   }
-"engines": {
-  "node": "20.x"
-}
 }

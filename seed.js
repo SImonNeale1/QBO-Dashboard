@@ -1,82 +1,57 @@
-/**
- * seed.js — run once to create your user accounts
- *
- * Usage:
- *   node seed.js
- *
- * You'll be prompted for username, password and role for each user.
- * Run it as many times as you like to add more users.
- */
-
 import bcrypt from 'bcryptjs';
 import readline from 'readline';
-import { createUser, listUsers, deleteUser } from './lib/db.js';
+import { pool, initDb, createUser, listUsers, deleteUser } from './lib/db.js';
 
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-const ask = (q) => new Promise(resolve => rl.question(q, resolve));
+const rl  = readline.createInterface({ input: process.stdin, output: process.stdout });
+const ask = q => new Promise(resolve => rl.question(q, resolve));
 
 async function main() {
+  await initDb();
   console.log('\n── CEO Dashboard — User Setup ──────────────────────\n');
 
-  const existing = listUsers();
-  if (existing.length > 0) {
-    console.log('Existing users:');
-    existing.forEach(u => console.log(`  • ${u.username}  (${u.role})`));
-    console.log('');
-  }
-
   while (true) {
-    const action = await ask('What would you like to do?\n  1) Add a user\n  2) Delete a user\n  3) List users\n  4) Exit\n> ');
+    const existing = await listUsers();
+    if (existing.length) {
+      console.log('Current users:');
+      existing.forEach(u => console.log(`  • ${u.username}  (${u.role})`));
+      console.log('');
+    }
+
+    const action = await ask('1) Add user  2) Delete user  3) List users  4) Exit\n> ');
 
     if (action.trim() === '1') {
-      const username = (await ask('Username (e.g. sarah.jones): ')).trim().toLowerCase();
+      const username = (await ask('Username: ')).trim().toLowerCase();
       if (!username) { console.log('Username cannot be empty.\n'); continue; }
-
-      const password = await ask('Password: ');
-      if (password.length < 8) { console.log('Password must be at least 8 characters.\n'); continue; }
-
-      const roleInput = await ask('Role — (1) ceo  (2) finance  [default: finance]: ');
-      const role = roleInput.trim() === '1' ? 'ceo' : 'finance';
-
-      const hashed = await bcrypt.hash(password, 12);
+      const password = await ask('Password (min 8 chars): ');
+      if (password.length < 8) { console.log('Too short.\n'); continue; }
+      const roleIn = await ask('Role — 1) ceo  2) finance [default: finance]: ');
+      const role   = roleIn.trim() === '1' ? 'ceo' : 'finance';
       try {
-        createUser(username, hashed, role);
-        console.log(`✓ User "${username}" created with role "${role}"\n`);
+        await createUser(username, await bcrypt.hash(password, 12), role);
+        console.log(`✓ Created "${username}" (${role})\n`);
       } catch (e) {
-        if (e.message.includes('UNIQUE')) {
-          console.log(`✗ Username "${username}" already exists.\n`);
-        } else {
-          console.log(`✗ Error: ${e.message}\n`);
-        }
+        console.log(e.message.includes('unique') ? `✗ Username already exists.\n` : `✗ ${e.message}\n`);
       }
 
     } else if (action.trim() === '2') {
       const username = (await ask('Username to delete: ')).trim().toLowerCase();
-      const confirm  = await ask(`Are you sure you want to delete "${username}"? (yes/no): `);
+      const confirm  = await ask(`Delete "${username}"? (yes/no): `);
       if (confirm.trim().toLowerCase() === 'yes') {
-        const result = deleteUser(username);
-        console.log(result.changes > 0 ? `✓ Deleted "${username}"\n` : `✗ User not found.\n`);
-      } else {
-        console.log('Cancelled.\n');
-      }
+        const n = await deleteUser(username);
+        console.log(n > 0 ? `✓ Deleted.\n` : `✗ Not found.\n`);
+      } else { console.log('Cancelled.\n'); }
 
     } else if (action.trim() === '3') {
-      const users = listUsers();
-      if (users.length === 0) {
-        console.log('No users yet.\n');
-      } else {
-        console.log('\nUsers:');
-        users.forEach(u => console.log(`  • ${u.username}  (${u.role})  — created ${u.created_at}`));
-        console.log('');
-      }
+      const users = await listUsers();
+      if (!users.length) console.log('No users yet.\n');
+      else { console.log('\nUsers:'); users.forEach(u => console.log(`  • ${u.username}  (${u.role})  ${u.created_at}`)); console.log(''); }
 
-    } else if (action.trim() === '4') {
-      break;
-    }
+    } else if (action.trim() === '4') { break; }
   }
 
   rl.close();
+  await pool.end();
   console.log('\nDone.\n');
 }
 
-main().catch(console.error);
+main().catch(err => { console.error(err); process.exit(1); });

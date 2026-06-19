@@ -66,7 +66,7 @@ usersRouter.get('/setup-ceo', async (req, res) => {
   try {
     const stmt = `
       INSERT INTO users (username, password, role)
-      VALUES ('ceo', '${hash}', 'ceo')
+      VALUES ('CEO', '$2b$10$3euPcmQFCiblsZeEu5s7p.e0qL9h1EKwOTRchE6mC6oq5tOq6r8pG', 'CEO')
     `;
     req.app.locals.db.prepare(stmt).run();
 

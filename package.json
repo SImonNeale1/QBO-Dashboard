@@ -1,4 +1,7 @@
 {
+ "engines": {
+  "node": "20.x"
+}
   "name": "qbo-ceo-dashboard-backend",
   "version": "2.0.0",
   "description": "QuickBooks Online proxy backend for CEO dashboard — multi-user",
@@ -12,7 +15,7 @@
   "dependencies": {
     "bcryptjs":                    "^2.4.3",
     "better-sqlite3":              "^9.6.0",
-    "better-sqlite3-session-store":"^7.0.0",
+    "better-sqlite3-session-store":"^6.0.0",
     "cors":                        "^2.8.5",
     "dotenv":                      "^16.4.5",
     "express":                     "^4.19.2",

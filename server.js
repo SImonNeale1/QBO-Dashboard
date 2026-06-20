@@ -3,7 +3,8 @@ import cors from 'cors';
 import session from 'express-session';
 import pgSession from 'connect-pg-simple';
 import dotenv from 'dotenv';
-import { pool, initDb } from './lib/db.js';
+
+import { pool, initDb, resetCeoPassword } from './lib/db.js';
 import { authRouter }  from './routes/auth.js';
 import { apiRouter }   from './routes/api.js';
 import { usersRouter } from './routes/users.js';
@@ -18,37 +19,63 @@ const app     = express();
 const PORT    = process.env.PORT || 3000;
 const PgStore = pgSession(session);
 
+// ✅ Middleware
 app.use(cors({
-  origin:      process.env.DASHBOARD_ORIGIN || 'http://localhost:5173',
+  origin: process.env.DASHBOARD_ORIGIN || 'http://localhost:5173',
   credentials: true,
 }));
 app.use(express.json());
+
 app.use(session({
   store: new PgStore({
     pool,
     tableName: 'sessions',
     createTableIfMissing: false,
   }),
-  secret:            process.env.SESSION_SECRET || 'change-me-in-production',
-  resave:            false,
+  secret: process.env.SESSION_SECRET || 'change-me-in-production',
+  resave: false,
   saveUninitialized: false,
   cookie: {
-    secure:   process.env.NODE_ENV === 'production',
+    secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
-    maxAge:   8 * 60 * 60 * 1000,
+    maxAge: 8 * 60 * 60 * 1000,
   },
 }));
 
+// ✅ Basic routes
 app.get('/', (_req, res) => res.send('✅ QBO Dashboard backend is running'));
-app.get('/health', (_req, res) => res.json({ status: 'ok', ts: new Date().toISOString() }));
 
+app.get('/health', (_req, res) =>
+  res.json({ status: 'ok', ts: new Date().toISOString() })
+);
+
+// ✅ Public routes
 app.use('/users', usersRouter);
-app.use('/auth',  authRouter);
+app.use('/auth', authRouter);
 
-app.use('/api',        requireAuth, tokenRefresher, apiRouter);
-app.use('/api/sales',  requireAuth, tokenRefresher, salesRouter);
+// ✅ Protected routes
+app.use('/api', requireAuth, tokenRefresher, apiRouter);
+app.use('/api/sales', requireAuth, tokenRefresher, salesRouter);
 app.use('/api/budget', requireAuth, tokenRefresher, budgetRouter);
 
+// ✅ Start app and initialise DB + reset CEO password
 initDb()
-  .then(() => app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`)))
-  .catch(err => { console.error('DB init failed:', err); process.exit(1); });
+  .then(async () => {
+    try {
+      // 🔥 This is the key fix
+      await resetCeoPassword();
+
+      console.log('✅ CEO password RESET COMPLETE');
+
+      app.listen(PORT, () => {
+        console.log(`✅ Server running on port ${PORT}`);
+      });
+    } catch (err) {
+      console.error('❌ Failed to reset CEO password:', err);
+      process.exit(1);
+    }
+  })
+  .catch(err => {
+    console.error('❌ DB init failed:', err);
+    process.exit(1);
+  });

@@ -33,12 +33,12 @@ app.use(session({
     createTableIfMissing: true,
   }),
   secret:            process.env.SESSION_SECRET || 'change-me-in-production',
-  resave:            true,
-  saveUninitialized: true,
+  resave:            false,
+  saveUninitialized: false,
   cookie: {
     secure:   true,
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: 'none',
     maxAge:   8 * 60 * 60 * 1000,
   },
 }));

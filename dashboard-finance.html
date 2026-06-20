@@ -424,78 +424,71 @@ function fmt(n) {
 function pct(n) { return isNaN(n) ? '—' : n.toFixed(1)+'%'; }
 
 // ── Auth ───────────────────────────────────────────────────────────────────
+function getToken() { return sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token'); }
+function saveToken(token, remember) {
+  if (remember) localStorage.setItem('auth_token', token);
+  else sessionStorage.setItem('auth_token', token);
+}
+function clearToken() { sessionStorage.removeItem('auth_token'); localStorage.removeItem('auth_token'); }
+
+async function apiFetch(path) {
+  const r = await fetch(`${API}/api${path}`, {
+    headers: { 'x-auth-token': getToken() }
+  });
+  if (r.status === 401) { showLogin(); return null; }
+  if (!r.ok) return null;
+  return r.json();
+}
+
 async function checkSession() {
+  const token = getToken();
+  if (!token) { showLogin(); return; }
   try {
-    const r = await fetch(`${API}/users/me`, { credentials: 'include' });
+    const r = await fetch(`${API}/users/me`, { headers: { 'x-auth-token': token } });
     if (r.ok) { showDashboard(); return; }
   } catch(e) {}
   showLogin();
 }
-function showLogin() {
-  document.getElementById('login-screen').style.display = 'flex';
-  document.getElementById('dashboard').style.display = 'none';
-}
-function showDashboard() {
-  document.getElementById('login-screen').style.display = 'none';
-  document.getElementById('dashboard').style.display = 'block';
-  startDashboard();
-}
+
+function showLogin()     { document.getElementById('login-screen').style.display='flex'; document.getElementById('dashboard').style.display='none'; }
+function showDashboard() { document.getElementById('login-screen').style.display='none'; document.getElementById('dashboard').style.display='block'; startDashboard(); }
+
+document.getElementById('login-btn').addEventListener('click', doLogin);
+document.getElementById('password').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+
 async function doLogin() {
-  const username = document.getElementById('username').value.trim();
-  const password = document.getElementById('password').value;
-  const errEl = document.getElementById('login-error');
-  const btn   = document.getElementById('login-btn');
-  errEl.style.display = 'none';
-  btn.textContent = 'Signing in…'; btn.disabled = true;
+  const username  = document.getElementById('username').value.trim();
+  const password  = document.getElementById('password').value;
+  const remember  = document.getElementById('remember-me').checked;
+  const errEl     = document.getElementById('login-error');
+  const btn       = document.getElementById('login-btn');
+  errEl.style.display = 'none'; btn.textContent = 'Signing in…'; btn.disabled = true;
   try {
     const r = await fetch(`${API}/users/login`, {
       method: 'POST',
-      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username,
-        password,
-        rememberMe: document.getElementById('remember-me').checked
-      })
+      body: JSON.stringify({ username, password, rememberMe: remember })
     });
-    if (r.ok) {
-      // Wait briefly for cookie to be set, then verify session before proceeding
-      await new Promise(resolve => setTimeout(resolve, 300));
-      const check = await fetch(`${API}/users/me`, { credentials: 'include' });
-      if (check.ok) {
-        showDashboard();
-      } else {
-        errEl.textContent = 'Login succeeded but session failed — please try again';
-        errEl.style.display = 'block';
-      }
+    const data = await r.json();
+    if (r.ok && data.token) {
+      saveToken(data.token, remember);
+      showDashboard();
     } else {
-      errEl.textContent = 'Incorrect username or password';
+      errEl.textContent = data.error || 'Incorrect username or password';
       errEl.style.display = 'block';
     }
   } catch(e) {
-    errEl.textContent = 'Could not reach server — check your connection';
+    errEl.textContent = 'Could not reach server';
     errEl.style.display = 'block';
   }
   btn.textContent = 'Sign in'; btn.disabled = false;
 }
 
-document.getElementById('login-btn').addEventListener('click', doLogin);
-document.getElementById('password').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
-async function doLogin() {
-  const username = document.getElementById('username').value.trim();
-  const password = document.getElementById('password').value;
-  const errEl = document.getElementById('login-error');
-  const btn   = document.getElementById('login-btn');
-  errEl.style.display='none'; btn.textContent='Signing in…'; btn.disabled=true;
-  try {
-    const r = await fetch(`${API}/users/login`,{ method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username,password,rememberMe:document.getElementById('remember-me').checked}) });
-    if(r.ok) showDashboard(); else errEl.style.display='block';
-  } catch(e) { errEl.textContent='Could not reach server'; errEl.style.display='block'; }
-  btn.textContent='Sign in'; btn.disabled=false;
-}
 document.getElementById('logout-btn').addEventListener('click', async () => {
-  await fetch(`${API}/users/logout`,{method:'POST',credentials:'include'});
-  showLogin(); if(refreshTimer) clearInterval(refreshTimer);
+  await fetch(`${API}/users/logout`, { method: 'POST', headers: { 'x-auth-token': getToken() }});
+  clearToken();
+  showLogin();
+  if (refreshTimer) clearInterval(refreshTimer);
 });
 
 // ── Settings ───────────────────────────────────────────────────────────────

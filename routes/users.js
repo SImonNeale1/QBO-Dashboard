@@ -5,23 +5,20 @@ import { getUserByUsername, pool } from '../lib/db.js';
 
 export const usersRouter = Router();
 
-// Simple in-memory token store (survives restarts via DB)
 async function createToken(userId, username, role, rememberMe) {
   const token   = crypto.randomBytes(32).toString('hex');
   const expires = Date.now() + (rememberMe ? 30 * 24 * 60 * 60 * 1000 : 8 * 60 * 60 * 1000);
   await pool.query(
-    `INSERT INTO sessions (sid, sess, expire) VALUES ($1, $2, $3)`,
+    `INSERT INTO sessions (sid, sess, expire) VALUES ($1, $2::jsonb, $3)`,
     [token, JSON.stringify({ userId, username, role }), new Date(expires)]
   );
   return token;
 }
 
-async function getTokenData(token) {
-  if (!token) return null;
-  const { rows } = await pool.query(
-    `SELECT sess FROM sessions WHERE sid = $1 AND expire > NOW()`, [token]
-  );
-  return rows[0] ? JSON.parse(rows[0].sess) : null;
+function parseSess(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'string') return JSON.parse(raw);
+  return raw; // Postgres jsonb already returns an object
 }
 
 usersRouter.post('/login', async (req, res) => {
@@ -57,27 +54,16 @@ usersRouter.get('/me', async (req, res) => {
   try {
     const token = req.headers['x-auth-token'];
     if (!token) return res.status(401).json({ authenticated: false });
-    
+
     const { rows } = await pool.query(
-      `SELECT sess FROM sessions WHERE sid = $1 AND expire > NOW()`,
-      [token]
+      `SELECT sess FROM sessions WHERE sid = $1 AND expire > NOW()`, [token]
     );
-    
     if (!rows[0]) return res.status(401).json({ authenticated: false });
-    
-    const sess = JSON.parse(rows[0].sess);
+
+    const sess = parseSess(rows[0].sess);
     res.json({ authenticated: true, username: sess.username, role: sess.role });
   } catch (err) {
     console.error('Me error:', err);
     res.status(500).json({ authenticated: false, error: err.message });
   }
 });
-
-// Middleware to validate token on API calls
-export async function validateToken(req, res, next) {
-  const token = req.headers['x-auth-token'];
-  const data  = await getTokenData(token);
-  if (!data) return res.status(401).json({ error: 'Not logged in' });
-  req.user = data;
-  next();
-}

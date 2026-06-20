@@ -58,12 +58,6 @@ app.use('/api',        requireAuth, tokenRefresher, apiRouter);
 app.use('/api/sales',  requireAuth, tokenRefresher, salesRouter);
 app.use('/api/budget', requireAuth, tokenRefresher, budgetRouter);
 
-// TEMPORARY — DELETE AFTER TESTING
-app.get('/check-users', async (_req, res) => {
-  const { rows } = await pool.query('SELECT id, username, role, created_at FROM users');
-  res.json(rows);
-});
-
 // ── Boot ───────────────────────────────────────────────────────────────────
 initDb()
   .then(() => app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`)))

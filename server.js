@@ -58,6 +58,12 @@ app.use('/api',        requireAuth, tokenRefresher, apiRouter);
 app.use('/api/sales',  requireAuth, tokenRefresher, salesRouter);
 app.use('/api/budget', requireAuth, tokenRefresher, budgetRouter);
 
+// TEMPORARY DEBUG — DELETE AFTER TESTING
+app.get('/check-sessions', async (_req, res) => {
+  const { rows } = await pool.query('SELECT * FROM sessions');
+  res.json(rows);
+});
+
 // ── Boot ───────────────────────────────────────────────────────────────────
 initDb()
   .then(() => app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`)))

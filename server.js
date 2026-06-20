@@ -4,7 +4,7 @@ import session from 'express-session';
 import pgSession from 'connect-pg-simple';
 import dotenv from 'dotenv';
 
-import { pool, initDb } from './lib/db.js';   // ✅ FIXED: removed resetCeoPassword
+import { pool, initDb } from './lib/db.js';
 import { authRouter }  from './routes/auth.js';
 import { apiRouter }   from './routes/api.js';
 import { usersRouter } from './routes/users.js';
@@ -19,14 +19,15 @@ const app     = express();
 const PORT    = process.env.PORT || 3000;
 const PgStore = pgSession(session);
 
-// ✅ Middleware
+// ✅ ✅ CORS (FIXED for cookies)
 app.use(cors({
-  origin: process.env.DASHBOARD_ORIGIN || 'http://localhost:5173',
+  origin: 'https://qbo-dashboard-fdtq.onrender.com',
   credentials: true,
 }));
 
 app.use(express.json());
 
+// ✅ ✅ SESSION (FIXED for browser cookies)
 app.use(session({
   store: new PgStore({
     pool,
@@ -37,8 +38,9 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
+    secure: true,          // ✅ required on Render (HTTPS)
     httpOnly: true,
+    sameSite: 'none',      // ✅ CRITICAL for session to work
     maxAge: 8 * 60 * 60 * 1000,
   },
 }));
@@ -61,7 +63,7 @@ app.use('/api', requireAuth, tokenRefresher, apiRouter);
 app.use('/api/sales', requireAuth, tokenRefresher, salesRouter);
 app.use('/api/budget', requireAuth, tokenRefresher, budgetRouter);
 
-// ✅ Start server after DB init
+// ✅ Start server
 initDb()
   .then(() => {
     app.listen(PORT, () => {

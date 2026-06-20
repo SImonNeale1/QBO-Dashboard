@@ -54,10 +54,23 @@ usersRouter.post('/logout', async (req, res) => {
 });
 
 usersRouter.get('/me', async (req, res) => {
-  const token = req.headers['x-auth-token'];
-  const data  = await getTokenData(token);
-  if (!data) return res.status(401).json({ authenticated: false });
-  res.json({ authenticated: true, username: data.username, role: data.role });
+  try {
+    const token = req.headers['x-auth-token'];
+    if (!token) return res.status(401).json({ authenticated: false });
+    
+    const { rows } = await pool.query(
+      `SELECT sess FROM sessions WHERE sid = $1 AND expire > NOW()`,
+      [token]
+    );
+    
+    if (!rows[0]) return res.status(401).json({ authenticated: false });
+    
+    const sess = JSON.parse(rows[0].sess);
+    res.json({ authenticated: true, username: sess.username, role: sess.role });
+  } catch (err) {
+    console.error('Me error:', err);
+    res.status(500).json({ authenticated: false, error: err.message });
+  }
 });
 
 // Middleware to validate token on API calls

@@ -58,6 +58,16 @@ app.use('/api',        requireAuth, tokenRefresher, apiRouter);
 app.use('/api/sales',  requireAuth, tokenRefresher, salesRouter);
 app.use('/api/budget', requireAuth, tokenRefresher, budgetRouter);
 
+// TEMPORARY DEBUG — DELETE AFTER TESTING
+app.post('/test-login', async (req, res) => {
+  const { username, password } = req.body;
+  const bcrypt = await import('bcryptjs');
+  const { rows } = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+  if (!rows[0]) return res.json({ error: 'user not found' });
+  const valid = await bcrypt.default.compare(password, rows[0].password);
+  res.json({ found: true, valid, role: rows[0].role, sessionBefore: req.session.userId || null });
+});
+
 // ── Boot ───────────────────────────────────────────────────────────────────
 initDb()
   .then(() => app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`)))

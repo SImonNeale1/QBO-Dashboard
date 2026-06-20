@@ -425,11 +425,59 @@ function pct(n) { return isNaN(n) ? '—' : n.toFixed(1)+'%'; }
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 async function checkSession() {
-  try { const r = await fetch(`${API}/users/me`,{credentials:'include'}); if(r.ok){showDashboard();return;} } catch(e){}
+  try {
+    const r = await fetch(`${API}/users/me`, { credentials: 'include' });
+    if (r.ok) { showDashboard(); return; }
+  } catch(e) {}
   showLogin();
 }
-function showLogin()     { document.getElementById('login-screen').style.display='flex'; document.getElementById('dashboard').style.display='none'; }
-function showDashboard() { document.getElementById('login-screen').style.display='none'; document.getElementById('dashboard').style.display='block'; startDashboard(); }
+function showLogin() {
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('dashboard').style.display = 'none';
+}
+function showDashboard() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'block';
+  startDashboard();
+}
+async function doLogin() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const errEl = document.getElementById('login-error');
+  const btn   = document.getElementById('login-btn');
+  errEl.style.display = 'none';
+  btn.textContent = 'Signing in…'; btn.disabled = true;
+  try {
+    const r = await fetch(`${API}/users/login`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username,
+        password,
+        rememberMe: document.getElementById('remember-me').checked
+      })
+    });
+    if (r.ok) {
+      // Wait briefly for cookie to be set, then verify session before proceeding
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const check = await fetch(`${API}/users/me`, { credentials: 'include' });
+      if (check.ok) {
+        showDashboard();
+      } else {
+        errEl.textContent = 'Login succeeded but session failed — please try again';
+        errEl.style.display = 'block';
+      }
+    } else {
+      errEl.textContent = 'Incorrect username or password';
+      errEl.style.display = 'block';
+    }
+  } catch(e) {
+    errEl.textContent = 'Could not reach server — check your connection';
+    errEl.style.display = 'block';
+  }
+  btn.textContent = 'Sign in'; btn.disabled = false;
+}
 
 document.getElementById('login-btn').addEventListener('click', doLogin);
 document.getElementById('password').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });

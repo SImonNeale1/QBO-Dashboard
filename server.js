@@ -30,15 +30,15 @@ app.use(session({
   store: new PgStore({
     pool,
     tableName: 'sessions',
-    createTableIfMissing: false,
+    createTableIfMissing: true,
   }),
   secret:            process.env.SESSION_SECRET || 'change-me-in-production',
-  resave:            false,
-  saveUninitialized: false,
+  resave:            true,
+  saveUninitialized: true,
   cookie: {
-    secure:   process.env.NODE_ENV === 'production',
+    secure:   true,
     httpOnly: true,
-    sameSite: 'none',
+    sameSite: 'lax',
     maxAge:   8 * 60 * 60 * 1000,
   },
 }));

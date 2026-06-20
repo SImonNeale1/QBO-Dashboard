@@ -64,6 +64,11 @@ app.get('/check-sessions', async (_req, res) => {
   res.json(rows);
 });
 
+app.post('/test-auth', async (req, res) => {
+  const token = req.headers['x-auth-token'];
+  res.json({ receivedToken: token || 'none', body: req.body });
+});
+
 // ── Boot ───────────────────────────────────────────────────────────────────
 initDb()
   .then(() => app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`)))

@@ -1,5 +1,3 @@
-
-import QuickBooks from 'node-quickbooks';
 import { getQboTokens, saveQboTokens, isQboTokenExpiredSoon } from '../lib/db.js';
 import { refreshAccessToken } from '../lib/qbo.js';
 
@@ -10,17 +8,10 @@ export async function tokenRefresher(req, res, next) {
     if (!expiredSoon) {
       const t = await getQboTokens();
 
-      req.qbo = new QuickBooks(
-        process.env.QBO_CLIENT_ID,
-        process.env.QBO_CLIENT_SECRET,
-        t.access_token,
-        false,
-        t.realm_id,
-        true,
-        true,
-        null,
-        '2.0'
-      );
+      req.qbo = {
+        accessToken: t.access_token,
+        realmId: t.realm_id
+      };
 
       return next();
     }
@@ -36,17 +27,10 @@ export async function tokenRefresher(req, res, next) {
       expiresAt,
     });
 
-    req.qbo = new QuickBooks(
-      process.env.QBO_CLIENT_ID,
-      process.env.QBO_CLIENT_SECRET,
-      tokens.access_token,
-      false,
-      current.realm_id,
-      true,
-      true,
-      null,
-      '2.0'
-    );
+    req.qbo = {
+      accessToken: tokens.access_token,
+      realmId: current.realm_id
+    };
 
     next();
 

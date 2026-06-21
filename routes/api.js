@@ -104,19 +104,21 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
     const data = await qboQuery(
       req.qbo,
       `SELECT Id, DocNumber, CustomerRef, Balance, DueDate, TotalAmt
-       FROM Invoice WHERE Balance > 0
+       FROM Invoice
        ORDERBY DueDate ASC MAXRESULTS ${limit}`
     );
 
-    const invoices = (data.QueryResponse?.Invoice || []).map(inv => ({
-      id:          inv.Id,
-      number:      inv.DocNumber,
-      customer:    inv.CustomerRef?.name,
-      balance:     safeNum(inv.Balance),
-      total:       safeNum(inv.TotalAmt),
-      dueDate:     inv.DueDate,
-      daysOverdue: daysOverdue(inv.DueDate),
-    }));
+const invoices = (data.QueryResponse?.Invoice || [])
+  .map(inv => ({
+    id:          inv.Id,
+    number:      inv.DocNumber,
+    customer:    inv.CustomerRef?.name,
+    balance:     parseFloat(inv.Balance),
+    total:       parseFloat(inv.TotalAmt),
+    dueDate:     inv.DueDate,
+    daysOverdue: daysOverdue(inv.DueDate),
+  }))
+  .filter(inv => inv.balance > 0);
 
     res.json({
       invoices,

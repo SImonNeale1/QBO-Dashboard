@@ -1,93 +1,747 @@
-<!-- KEEP EVERYTHING ABOVE EXACTLY THE SAME UNTIL SCRIPT SECTION -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Financial Dashboard</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:      #0f1117;
+  --surface: #1a1d27;
+  --surface2:#22263a;
+  --border:  #2e3349;
+  --text:    #e8eaf0;
+  --muted:   #8b90a8;
+  --green:   #1db87a;
+  --red:     #e05252;
+  --amber:   #e09b34;
+  --blue:    #4a8fe8;
+  --radius:  10px;
+  --font:    -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+body { font-family:var(--font); background:var(--bg); color:var(--text); font-size:14px; min-height:100vh; }
+
+/* ── Login ── */
+#login-screen { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:1rem; }
+.login-box { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:2.5rem; width:100%; max-width:380px; }
+.login-box h1 { font-size:20px; font-weight:600; margin-bottom:.25rem; }
+.login-box p  { color:var(--muted); font-size:13px; margin-bottom:2rem; }
+.field { margin-bottom:1rem; }
+.field label { display:block; font-size:12px; color:var(--muted); margin-bottom:6px; font-weight:500; }
+.field input { width:100%; padding:10px 12px; background:var(--surface2); border:1px solid var(--border); border-radius:7px; color:var(--text); font-size:14px; outline:none; transition:border-color .15s; }
+.field input:focus { border-color:var(--blue); }
+.btn-primary { width:100%; padding:11px; background:var(--blue); color:#fff; border:none; border-radius:7px; font-size:14px; font-weight:500; cursor:pointer; transition:opacity .15s; margin-top:.5rem; }
+.btn-primary:hover { opacity:.85; }
+.login-error { color:var(--red); font-size:13px; margin-top:.75rem; display:none; text-align:center; }
+
+/* ── Topbar ── */
+#dashboard { display:none; }
+.topbar { background:var(--surface); border-bottom:1px solid var(--border); padding:.75rem 1.5rem; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; position:sticky; top:0; z-index:10; }
+.topbar-left { display:flex; align-items:center; gap:12px; }
+.topbar h1   { font-size:16px; font-weight:600; }
+.topbar-right { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.badge { font-size:12px; padding:3px 10px; border-radius:20px; border:1px solid var(--border); color:var(--muted); }
+.badge.live { background:rgba(29,184,122,.12); color:var(--green); border-color:rgba(29,184,122,.3); }
+.toggle-wrap { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
+.toggle { position:relative; width:38px; height:21px; cursor:pointer; }
+.toggle input { opacity:0; width:0; height:0; }
+.slider { position:absolute; inset:0; background:var(--border); border-radius:11px; transition:.2s; }
+.slider::before { content:''; position:absolute; width:15px; height:15px; left:3px; top:3px; background:#fff; border-radius:50%; transition:.2s; }
+input:checked + .slider { background:var(--green); }
+input:checked + .slider::before { transform:translateX(17px); }
+.icon-btn { font-size:13px; color:var(--muted); background:none; border:1px solid var(--border); border-radius:6px; padding:4px 10px; cursor:pointer; display:flex; align-items:center; gap:5px; }
+.icon-btn:hover { color:var(--text); }
+
+/* ── Settings panel ── */
+.settings-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:100; }
+.settings-overlay.open { display:flex; align-items:flex-start; justify-content:flex-end; }
+.settings-panel { background:var(--surface); border-left:1px solid var(--border); width:320px; min-height:100vh; padding:1.5rem; overflow-y:auto; animation:slideIn .2s ease; }
+@keyframes slideIn { from { transform:translateX(100%); } to { transform:translateX(0); } }
+.settings-panel h2 { font-size:16px; font-weight:600; margin-bottom:1.5rem; display:flex; align-items:center; justify-content:space-between; }
+.settings-close { background:none; border:none; color:var(--muted); font-size:20px; cursor:pointer; }
+.settings-close:hover { color:var(--text); }
+.settings-section { margin-bottom:1.5rem; }
+.settings-section h3 { font-size:11px; font-weight:500; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:.75rem; }
+.settings-row { display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid rgba(46,51,73,.4); font-size:13px; }
+.settings-row:last-child { border-bottom:none; }
+.settings-input { width:120px; padding:5px 8px; background:var(--surface2); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px; outline:none; }
+.settings-input:focus { border-color:var(--blue); }
+.settings-save { width:100%; padding:9px; background:var(--blue); color:#fff; border:none; border-radius:7px; font-size:13px; font-weight:500; cursor:pointer; margin-top:1rem; }
+.settings-save:hover { opacity:.85; }
+.settings-toggle { position:relative; width:38px; height:21px; cursor:pointer; flex-shrink:0; }
+.settings-toggle input { opacity:0; width:0; height:0; }
+
+/* ── Main layout ── */
+.main { padding:1.5rem; max-width:1400px; margin:0 auto; }
+.kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin-bottom:1.5rem; }
+.kpi { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:1rem 1.125rem; }
+.kpi-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:6px; }
+.kpi-value { font-size:22px; font-weight:600; line-height:1; }
+.kpi-sub   { font-size:12px; color:var(--muted); margin-top:5px; }
+.kpi-adj   { font-size:11px; color:var(--green); margin-top:3px; display:none; }
+.kpi-budget { font-size:11px; margin-top:4px; }
+
+.two-col { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1rem; }
+@media(max-width:700px) { .two-col { grid-template-columns:1fr; } }
+.card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:1.125rem 1.25rem; margin-bottom:1rem; }
+.card-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem; }
+.card-title  { font-size:13px; font-weight:500; }
+.card-meta   { font-size:12px; color:var(--muted); }
+
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th { font-size:11px; font-weight:500; color:var(--muted); text-align:left; padding:5px 8px; border-bottom:1px solid var(--border); text-transform:uppercase; letter-spacing:.04em; }
+td { padding:7px 8px; border-bottom:1px solid rgba(46,51,73,.5); }
+tr:last-child td { border-bottom:none; }
+.num  { text-align:right; font-variant-numeric:tabular-nums; }
+.bold { font-weight:600; }
+
+.pill { display:inline-block; font-size:11px; padding:2px 8px; border-radius:20px; font-weight:500; }
+.pill-red   { background:rgba(224,82,82,.15);  color:var(--red); }
+.pill-amber { background:rgba(224,155,52,.15); color:var(--amber); }
+.pill-green { background:rgba(29,184,122,.15); color:var(--green); }
+
+.var-pos { color:var(--green); }
+.var-neg { color:var(--red); }
+
+.adj-input,.adj-select { background:var(--surface2); border:1px solid var(--border); border-radius:5px; color:var(--text); font-size:12px; padding:4px 7px; outline:none; }
+.adj-input { width:100px; text-align:right; }
+.adj-select { width:130px; }
+.adj-input:focus,.adj-select:focus { border-color:var(--blue); }
+.desc-input { background:var(--surface2); border:1px solid var(--border); border-radius:5px; color:var(--text); font-size:12px; padding:4px 7px; width:100%; outline:none; }
+.desc-input:focus { border-color:var(--blue); }
+.del-btn { background:none; border:none; color:var(--red); cursor:pointer; font-size:16px; padding:0 4px; opacity:.6; }
+.del-btn:hover { opacity:1; }
+.btn { font-size:12px; padding:6px 14px; border-radius:6px; cursor:pointer; border:1px solid var(--border); background:var(--surface2); color:var(--text); }
+.btn:hover { background:var(--border); }
+.btn-green { background:rgba(29,184,122,.15); border-color:rgba(29,184,122,.3); color:var(--green); }
+.btn-green:hover { background:rgba(29,184,122,.25); }
+.chart-wrap { position:relative; height:200px; width:100%; }
+.loading { color:var(--muted); font-size:13px; padding:1rem 0; text-align:center; }
+.section-hidden { display:none !important; }
+
+/* ── Budget vs Actual ── */
+.bva-table th.actual  { color:#4a8fe8; }
+.bva-table th.budget  { color:#8b90a8; }
+.bva-table th.var     { color:#e8eaf0; }
+.bva-divider { border-top:2px solid var(--border) !important; }
+.month-tabs { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:1rem; }
+.month-tab { font-size:11px; padding:3px 9px; border-radius:20px; border:1px solid var(--border); background:none; color:var(--muted); cursor:pointer; }
+.month-tab.active { background:var(--blue); color:#fff; border-color:var(--blue); }
+.month-tab:hover:not(.active) { border-color:var(--text); color:var(--text); }
+.bva-toggle { display:flex; gap:6px; margin-bottom:1rem; }
+.bva-btn { font-size:12px; padding:4px 12px; border-radius:6px; border:1px solid var(--border); background:none; color:var(--muted); cursor:pointer; }
+.bva-btn.active { background:var(--surface2); color:var(--text); border-color:var(--blue); }
+</style>
+</head>
+<body>
 
 <script>
-// ── Helpers ────────────────────────────────────────────────────────────────
-let cfg = { company:'My Company', currency:'£', pl:true, bs:true, adj:true, inv:true, cust:true, chart:true, varGbp:true, varPct:true, varColor:true, mgmt:true };
-function loadCfg() { try { const s=localStorage.getItem('fin_cfg'); if(s) cfg={...cfg,...JSON.parse(s)}; } catch(e){} }
-function saveCfg() {
-  cfg.company=document.getElementById('cfg-company').value||'My Company';
-  cfg.currency=document.getElementById('cfg-currency').value||'£';
-  ['pl','bs','adj','inv','cust','chart'].forEach(k=>cfg[k]=document.getElementById('cfg-'+k).checked);
-  cfg.varGbp=document.getElementById('cfg-var-gbp').checked;
-  cfg.varPct=document.getElementById('cfg-var-pct').checked;
-  cfg.varColor=document.getElementById('cfg-var-color').checked;
-  cfg.mgmt=document.getElementById('cfg-mgmt').checked;
-  try { localStorage.setItem('fin_cfg',JSON.stringify(cfg)); } catch(e){}
-  applyCfg();
+const API = '';
+</script>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-box">
+    <h1>Financial Dashboard</h1>
+    <p>Sign in to access your management accounts</p>
+    <div class="field"><label>Username</label><input type="text" id="username" autocomplete="username"></div>
+    <div class="field"><label>Password</label><input type="password" id="password" autocomplete="current-password"></div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:.75rem">
+      <input type="checkbox" id="remember-me" style="width:15px;height:15px;accent-color:var(--blue);cursor:pointer">
+      <label for="remember-me" style="font-size:13px;color:var(--muted);cursor:pointer">Remember me for 30 days</label>
+    </div>
+    <button class="btn-primary" id="login-btn">Sign in</button>
+    <div class="login-error" id="login-error">Incorrect username or password</div>
+  </div>
+</div>
+
+<!-- SETTINGS PANEL -->
+<div class="settings-overlay" id="settings-overlay">
+  <div class="settings-panel">
+    <h2>Settings <button class="settings-close" id="settings-close">×</button></h2>
+
+    <div class="settings-section">
+      <h3>Company</h3>
+      <div class="settings-row"><span>Company name</span><input class="settings-input" id="cfg-company" value="My Company"></div>
+      <div class="settings-row"><span>Currency symbol</span><input class="settings-input" id="cfg-currency" value="£" style="width:60px"></div>
+    </div>
+
+    <div class="settings-section">
+      <h3>Dashboard sections</h3>
+      <div class="settings-row"><span>P&amp;L &amp; Budget</span><label class="settings-toggle toggle"><input type="checkbox" id="cfg-pl" checked><span class="slider"></span></label></div>
+      <div class="settings-row"><span>Balance sheet</span><label class="settings-toggle toggle"><input type="checkbox" id="cfg-bs" checked><span class="slider"></span></label></div>
+      <div class="settings-row"><span>Accrual adjustments</span><label class="settings-toggle toggle"><input type="checkbox" id="cfg-adj" checked><span class="slider"></span></label></div>
+      <div class="settings-row"><span>Outstanding invoices</span><label class="settings-toggle toggle"><input type="checkbox" id="cfg-inv" checked><span class="slider"></span></label></div>
+      <div class="settings-row"><span>Top customers</span><label class="settings-toggle toggle"><input type="checkbox" id="cfg-cust" checked><span class="slider"></span></label></div>
+      <div class="settings-row"><span>Revenue chart</span><label class="settings-toggle toggle"><input type="checkbox" id="cfg-chart" checked><span class="slider"></span></label></div>
+    </div>
+
+    <div class="settings-section">
+      <h3>Budget variance display</h3>
+      <div class="settings-row"><span>Show £ variance</span><label class="settings-toggle toggle"><input type="checkbox" id="cfg-var-gbp" checked><span class="slider"></span></label></div>
+      <div class="settings-row"><span>Show % variance</span><label class="settings-toggle toggle"><input type="checkbox" id="cfg-var-pct" checked><span class="slider"></span></label></div>
+      <div class="settings-row"><span>Highlight over-budget</span><label class="settings-toggle toggle"><input type="checkbox" id="cfg-var-color" checked><span class="slider"></span></label></div>
+    </div>
+
+    <div class="settings-section">
+      <h3>Management view</h3>
+      <div class="settings-row"><span>Show adjustment column</span><label class="settings-toggle toggle"><input type="checkbox" id="cfg-mgmt" checked><span class="slider"></span></label></div>
+    </div>
+
+    <button class="settings-save" id="settings-save">Save settings</button>
+    <div style="font-size:12px;color:var(--muted);margin-top:.75rem;text-align:center" id="settings-saved" style="display:none">✓ Saved</div>
+  </div>
+</div>
+
+<!-- DASHBOARD -->
+<div id="dashboard">
+  <div class="topbar">
+    <div class="topbar-left">
+      <h1 id="topbar-title">Financial Dashboard</h1>
+      <span class="badge live">● Live</span>
+      <span class="badge" id="refresh-badge">Refreshed just now</span>
+    </div>
+    <div class="topbar-right">
+      <div class="toggle-wrap">
+        <span>QBO raw</span>
+        <label class="toggle"><input type="checkbox" id="mgmt-toggle" checked><span class="slider"></span></label>
+        <span>Management view</span>
+      </div>
+      <button class="icon-btn" id="settings-btn">⚙ Settings</button>
+      <button class="icon-btn" id="logout-btn">Sign out</button>
+    </div>
+  </div>
+
+  <div class="main">
+
+    <!-- KPIs -->
+    <div class="kpi-grid" id="section-kpi">
+      <div class="kpi">
+        <div class="kpi-label">Revenue</div>
+        <div class="kpi-value" id="kpi-rev">—</div>
+        <div class="kpi-adj"   id="kpi-rev-adj"></div>
+        <div class="kpi-budget" id="kpi-rev-bud"></div>
+        <div class="kpi-sub"   id="kpi-rev-sub">YTD</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Gross profit</div>
+        <div class="kpi-value" id="kpi-gp">—</div>
+        <div class="kpi-adj"   id="kpi-gp-adj"></div>
+        <div class="kpi-budget" id="kpi-gp-bud"></div>
+        <div class="kpi-sub"   id="kpi-gp-sub">—</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Net profit</div>
+        <div class="kpi-value" id="kpi-net">—</div>
+        <div class="kpi-adj"   id="kpi-net-adj"></div>
+        <div class="kpi-budget" id="kpi-net-bud"></div>
+        <div class="kpi-sub"   id="kpi-net-sub">—</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Cash</div>
+        <div class="kpi-value" id="kpi-cash">—</div>
+        <div class="kpi-sub">Current balance</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Outstanding AR</div>
+        <div class="kpi-value" id="kpi-ar">—</div>
+        <div class="kpi-sub"   id="kpi-ar-sub">open invoices</div>
+      </div>
+    </div>
+
+    <!-- Budget vs Actual -->
+    <div class="card" id="section-pl">
+      <div class="card-header">
+        <span class="card-title">Budget vs Actual — Summary P&amp;L</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="card-meta" id="pl-period">YTD</span>
+        </div>
+      </div>
+
+      <div class="bva-toggle">
+        <button class="bva-btn active" id="bva-ytd-btn" onclick="setBvaView('ytd')">YTD cumulative</button>
+        <button class="bva-btn" id="bva-month-btn" onclick="setBvaView('month')">By month</button>
+      </div>
+
+      <!-- YTD view -->
+      <div id="bva-ytd-view">
+        <table class="bva-table">
+          <thead>
+            <tr>
+              <th style="width:28%">Line</th>
+              <th class="num actual">Actual</th>
+              <th class="num budget">Budget</th>
+              <th class="num var" id="var-gbp-head">Variance £</th>
+              <th class="num var" id="var-pct-head">Variance %</th>
+              <th class="num actual">Adj</th>
+              <th class="num actual">Mgmt actual</th>
+            </tr>
+          </thead>
+          <tbody id="bva-ytd-body"><tr><td colspan="7" class="loading">Loading…</td></tr></tbody>
+        </table>
+      </div>
+
+      <!-- Monthly view -->
+      <div id="bva-month-view" style="display:none">
+        <div class="month-tabs" id="month-tabs"></div>
+        <table class="bva-table">
+          <thead>
+            <tr>
+              <th style="width:28%">Line</th>
+              <th class="num actual">Actual</th>
+              <th class="num budget">Budget</th>
+              <th class="num var">Variance £</th>
+              <th class="num var">Variance %</th>
+            </tr>
+          </thead>
+          <tbody id="bva-month-body"><tr><td colspan="5" class="loading">Loading…</td></tr></tbody>
+        </table>
+      </div>
+
+      <!-- Adjustments -->
+      <div id="section-adj" style="margin-top:1.25rem;border-top:1px solid var(--border);padding-top:1rem">
+        <div class="card-header" style="margin-bottom:.75rem">
+          <span class="card-title">Accruals &amp; prepayment adjustments</span>
+          <span class="card-meta">Your entries only</span>
+        </div>
+        <table>
+          <thead><tr><th style="width:35%">Description</th><th>Type</th><th>P&amp;L line</th><th class="num">Amount (£)</th><th>Source</th><th></th></tr></thead>
+          <tbody id="adj-body"></tbody>
+        </table>
+        <div style="display:flex;gap:8px;margin-top:.875rem">
+          <button class="btn" onclick="addAdj()">+ Add adjustment</button>
+          <button class="btn btn-green" onclick="saveAdj()">Save adjustments</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Balance sheet -->
+    <div id="section-bs" class="card">
+      <div class="card-header">
+        <span class="card-title">Balance sheet</span>
+        <span class="card-meta" id="bs-date">Today</span>
+      </div>
+      <table>
+        <thead><tr><th>Item</th><th class="num">Value</th></tr></thead>
+        <tbody id="bs-body"><tr><td colspan="2" class="loading">Loading…</td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- Invoices + Customers -->
+    <div class="two-col">
+      <div class="card" id="section-inv">
+        <div class="card-header">
+          <span class="card-title">Outstanding invoices</span>
+          <span class="card-meta" id="inv-meta" style="color:var(--red)"></span>
+        </div>
+        <table>
+          <thead><tr><th>Customer</th><th class="num">Balance</th><th>Status</th></tr></thead>
+          <tbody id="inv-body"><tr><td colspan="3" class="loading">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="card" id="section-cust">
+        <div class="card-header"><span class="card-title">Top customers — YTD</span></div>
+        <table>
+          <thead><tr><th>Customer</th><th class="num">Revenue</th><th class="num">%</th></tr></thead>
+          <tbody id="cust-body"><tr><td colspan="3" class="loading">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Revenue chart -->
+    <div class="card" id="section-chart">
+      <div class="card-header"><span class="card-title">Revenue vs expenses — monthly</span></div>
+      <div style="display:flex;gap:16px;margin-bottom:10px;font-size:12px;color:var(--muted)">
+        <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--green);margin-right:4px"></span>Revenue</span>
+        <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--red);margin-right:4px"></span>Expenses</span>
+        <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(74,143,232,.5);margin-right:4px"></span>Budget</span>
+      </div>
+      <div class="chart-wrap"><canvas id="rev-chart"></canvas></div>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+// ── Config ─────────────────────────────────────────────────────────────────
+let cfg = {
+  company:'My Company', currency:'£',
+  pl:true, bs:true, adj:true, inv:true, cust:true, chart:true,
+  varGbp:true, varPct:true, varColor:true, mgmt:true,
+};
+
+function loadCfg() {
+  try { const s = localStorage.getItem('fin_cfg'); if(s) cfg = {...cfg,...JSON.parse(s)}; } catch(e){}
 }
-function fmt(n){if(n==null||isNaN(n))return'—';const s=n<0?'-':'';const abs=Math.abs(n);return s+(cfg.currency||'£')+abs.toLocaleString();}
+function saveCfg() {
+  cfg.company  = document.getElementById('cfg-company').value  || 'My Company';
+  cfg.currency = document.getElementById('cfg-currency').value || '£';
+  cfg.pl    = document.getElementById('cfg-pl').checked;
+  cfg.bs    = document.getElementById('cfg-bs').checked;
+  cfg.adj   = document.getElementById('cfg-adj').checked;
+  cfg.inv   = document.getElementById('cfg-inv').checked;
+  cfg.cust  = document.getElementById('cfg-cust').checked;
+  cfg.chart = document.getElementById('cfg-chart').checked;
+  cfg.varGbp   = document.getElementById('cfg-var-gbp').checked;
+  cfg.varPct   = document.getElementById('cfg-var-pct').checked;
+  cfg.varColor = document.getElementById('cfg-var-color').checked;
+  cfg.mgmt     = document.getElementById('cfg-mgmt').checked;
+  try { localStorage.setItem('fin_cfg', JSON.stringify(cfg)); } catch(e){}
+  applyCfg();
+  document.getElementById('settings-saved').textContent = '✓ Saved';
+  setTimeout(() => document.getElementById('settings-saved').textContent = '', 2000);
+}
+function applyCfg() {
+  document.getElementById('topbar-title').textContent = cfg.company + ' — Financial Dashboard';
+  document.title = cfg.company + ' Dashboard';
+  const sections = { pl:'section-pl', bs:'section-bs', inv:'section-inv', cust:'section-cust', chart:'section-chart' };
+  Object.entries(sections).forEach(([k,id]) => {
+    document.getElementById(id).classList.toggle('section-hidden', !cfg[k]);
+  });
+  document.getElementById('section-adj').classList.toggle('section-hidden', !cfg.adj);
+  document.getElementById('var-gbp-head').classList.toggle('section-hidden', !cfg.varGbp);
+  document.getElementById('var-pct-head').classList.toggle('section-hidden', !cfg.varPct);
+  document.getElementById('mgmt-toggle').closest('.toggle-wrap').style.display = cfg.mgmt ? '' : 'none';
+  // Sync settings panel inputs
+  document.getElementById('cfg-company').value  = cfg.company;
+  document.getElementById('cfg-currency').value = cfg.currency;
+  ['pl','bs','adj','inv','cust','chart'].forEach(k => document.getElementById('cfg-'+k).checked = cfg[k]);
+  document.getElementById('cfg-var-gbp').checked   = cfg.varGbp;
+  document.getElementById('cfg-var-pct').checked   = cfg.varPct;
+  document.getElementById('cfg-var-color').checked = cfg.varColor;
+  document.getElementById('cfg-mgmt').checked      = cfg.mgmt;
+  if (bvaData) { renderBvaYtd(); renderBvaMonth(); }
+}
+function fmt(n) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  const sym = cfg.currency || '£';
+  const abs = Math.abs(n);
+  const s = abs >= 1e6 ? sym+(abs/1e6).toFixed(2)+'m' : abs >= 1e3 ? sym+(abs/1e3).toFixed(0)+'k' : sym+abs.toLocaleString();
+  return n < 0 ? '-'+s : s;
+}
+function pct(n) { return isNaN(n) ? '—' : n.toFixed(1)+'%'; }
 
 // ── Auth ───────────────────────────────────────────────────────────────────
-function getToken(){return localStorage.getItem('auth_token')||sessionStorage.getItem('auth_token');}
-function saveToken(t,r){r?localStorage.setItem('auth_token',t):sessionStorage.setItem('auth_token',t);}
-function clearToken(){localStorage.removeItem('auth_token');sessionStorage.removeItem('auth_token');}
+function getToken() { return sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token'); }
+function saveToken(token, remember) {
+  if (remember) localStorage.setItem('auth_token', token);
+  else sessionStorage.setItem('auth_token', token);
+}
+function clearToken() { sessionStorage.removeItem('auth_token'); localStorage.removeItem('auth_token'); }
 
-// ✅ ✅ FIXED apiFetch (THIS IS THE IMPORTANT PART)
 async function apiFetch(path) {
+  const r = await fetch(`${API}/api${path}`, {
+    headers: { 'x-auth-token': getToken() }
+  });
+  if (r.status === 401) { showLogin(); return null; }
+  if (!r.ok) return null;
+  return r.json();
+}
+
+async function checkSession() {
+  const token = getToken();
+  if (!token) { showLogin(); return; }
   try {
-    const token = getToken();
+    const r = await fetch(`${API}/users/me`, { headers: { 'x-auth-token': token } });
+    if (r.ok) { showDashboard(); return; }
+  } catch(e) {}
+  showLogin();
+}
 
-    if (!token) {
-      console.error('❌ No token found');
-      showLogin();
-      return null;
-    }
+function showLogin()     { document.getElementById('login-screen').style.display='flex'; document.getElementById('dashboard').style.display='none'; }
+function showDashboard() { document.getElementById('login-screen').style.display='none'; document.getElementById('dashboard').style.display='block'; startDashboard(); }
 
-    let url;
-    if (path.startsWith('/api/')) {
-      url = path;
-    } else if (path.startsWith('/')) {
-      url = '/api' + path;
-    } else {
-      url = '/api/' + path;
-    }
+document.getElementById('login-btn').addEventListener('click', doLogin);
+document.getElementById('password').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 
-    console.log('➡️ API CALL:', url);
-
-    const r = await fetch(url, {
-      headers: {
-        'x-auth-token': token
-      }
+async function doLogin() {
+  const username  = document.getElementById('username').value.trim();
+  const password  = document.getElementById('password').value;
+  const remember  = document.getElementById('remember-me').checked;
+  const errEl     = document.getElementById('login-error');
+  const btn       = document.getElementById('login-btn');
+  errEl.style.display = 'none'; btn.textContent = 'Signing in…'; btn.disabled = true;
+  try {
+    const r = await fetch(`${API}/users/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, rememberMe: remember })
     });
-
-    if (r.status === 401) {
-      console.warn('⚠️ Not logged in');
-      showLogin();
-      return null;
+    const data = await r.json();
+    if (r.ok && data.token) {
+      saveToken(data.token, remember);
+      showDashboard();
+    } else {
+      errEl.textContent = data.error || 'Incorrect username or password';
+      errEl.style.display = 'block';
     }
-
-    const text = await r.text();
-
-    if (!r.ok) {
-      console.error('❌ API ERROR:', text);
-      return null;
-    }
-
-    try {
-      return JSON.parse(text);
-    } catch {
-      console.warn('Non JSON response:', text);
-      return null;
-    }
-
-  } catch (e) {
-    console.error('FETCH ERROR:', e);
-    return null;
+  } catch(e) {
+    errEl.textContent = 'Could not reach server';
+    errEl.style.display = 'block';
   }
+  btn.textContent = 'Sign in'; btn.disabled = false;
 }
 
-// ── Session ────────────────────────────────────────────────────────────────
-async function checkSession(){
-  const token=getToken();
-  if(!token){showLogin();return;}
-  try{
-    const r=await fetch('/users/me',{headers:{'x-auth-token':token}});
-    if(r.ok){showDashboard();return;}
-  }catch(e){}
-  clearToken();showLogin();
+document.getElementById('logout-btn').addEventListener('click', async () => {
+  await fetch(`${API}/users/logout`, { method: 'POST', headers: { 'x-auth-token': getToken() }});
+  clearToken();
+  showLogin();
+  if (refreshTimer) clearInterval(refreshTimer);
+});
+
+// ── Settings ───────────────────────────────────────────────────────────────
+document.getElementById('settings-btn').addEventListener('click',  () => document.getElementById('settings-overlay').classList.add('open'));
+document.getElementById('settings-close').addEventListener('click', () => document.getElementById('settings-overlay').classList.remove('open'));
+document.getElementById('settings-overlay').addEventListener('click', e => { if(e.target===document.getElementById('settings-overlay')) document.getElementById('settings-overlay').classList.remove('open'); });
+document.getElementById('settings-save').addEventListener('click',  () => { saveCfg(); document.getElementById('settings-overlay').classList.remove('open'); });
+
+// ── State ──────────────────────────────────────────────────────────────────
+let plData=null, bsData=null, invData=null, custData=null, bvaData=null;
+let adjData=[], chart=null, refreshTimer=null, secondsAgo=0;
+let bvaView='ytd', selectedMonth=null;
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+function startDashboard() {
+  loadCfg(); applyCfg(); loadAdj(); loadAll();
+  secondsAgo=0;
+  if(refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => {
+    secondsAgo++;
+    const mins = Math.floor(secondsAgo/60);
+    document.getElementById('refresh-badge').textContent = mins===0?'Refreshed just now':`Refreshed ${mins}m ago`;
+    if(secondsAgo%60===0){ loadAll(); secondsAgo=0; }
+  }, 1000);
+  document.getElementById('mgmt-toggle').addEventListener('change', () => { renderBvaYtd(); });
+}
+async function loadAll() {
+  document.getElementById('refresh-badge').textContent='Refreshing…';
+  await Promise.allSettled([loadPL(), loadBS(), loadInvoices(), loadCustomers(), loadBudget()]);
+  document.getElementById('refresh-badge').textContent='Refreshed just now';
+  secondsAgo=0;
+}
+async function apiFetch(path) {
+  const r = await fetch(`${API}/api${path}`,{credentials:'include'});
+  if(r.status===401){ showLogin(); return null; }
+  if(!r.ok) return null;
+  return r.json();
 }
 
-function showLogin(){
-  document.getElementById('login-screen').style.display='flex';
-  document.getElementById('dashboard').style.display='none';
+// ── P&L / BS / Invoices / Customers ───────────────────────────────────────
+async function loadPL() {
+  const data = await apiFetch('/pl'); if(!data) return;
+  plData=data;
+  document.getElementById('kpi-rev').textContent  = fmt(data.revenue);
+  document.getElementById('kpi-gp').textContent   = fmt(data.grossProfit);
+  document.getElementById('kpi-net').textContent  = fmt(data.netIncome);
+  document.getElementById('kpi-gp-sub').textContent  = pct(data.grossMarginPct)+' margin';
+  document.getElementById('kpi-net-sub').textContent = pct(data.netMarginPct)+' margin';
+  document.getElementById('pl-period').textContent   = `${data.startDate} → ${data.endDate}`;
+  if(bvaData) renderBvaYtd();
 }
+async function loadBS() {
+  const data = await apiFetch('/balance-sheet'); if(!data) return;
+  bsData=data;
+  document.getElementById('kpi-cash').textContent = fmt(data.cash);
+  document.getElementById('bs-date').textContent  = data.asOf||'Today';
+  const rows=[['Current assets',data.currentAssets],['— Cash & bank',data.cash],['— Accounts receivable',data.accountsReceivable],['Fixed assets',data.fixedAssets],['Total assets',data.totalAssets,true],['Current liabilities',data.currentLiabilities],['Long-term liabilities',data.longTermLiabilities],['Net assets',data.netAssets,true]];
+  document.getElementById('bs-body').innerHTML=rows.map(([l,v,b])=>`<tr><td${b?' class="bold"':''}>${l}</td><td class="num${b?' bold':''}">${fmt(v)}</td></tr>`).join('');
+}
+async function loadInvoices() {
+  const data = await apiFetch('/invoices/outstanding'); if(!data) return;
+  invData=data;
+  document.getElementById('kpi-ar').textContent    = fmt(data.totalOutstanding);
+  document.getElementById('kpi-ar-sub').textContent= `${data.count} open invoices`;
+  if(data.overdueCount>0) document.getElementById('inv-meta').textContent=`${data.overdueCount} overdue`;
+  const top=data.invoices.slice(0,8);
+  document.getElementById('inv-body').innerHTML=top.map(inv=>{
+    const pill=inv.daysOverdue>30?`<span class="pill pill-red">${inv.daysOverdue}d overdue</span>`:inv.daysOverdue>0?`<span class="pill pill-amber">${inv.daysOverdue}d overdue</span>`:`<span class="pill pill-green">Due ${inv.dueDate}</span>`;
+    return`<tr><td>${inv.customer||'Unknown'}</td><td class="num">${fmt(inv.balance)}</td><td>${pill}</td></tr>`;
+  }).join('')+(data.count>8?`<tr><td style="color:var(--muted)">+${data.count-8} more</td><td class="num">${fmt(data.invoices.slice(8).reduce((s,i)=>s+i.balance,0))}</td><td></td></tr>`:'');
+}
+async function loadCustomers() {
+  const data = await apiFetch('/customers/top'); if(!data) return;
+  custData=data;
+  document.getElementById('cust-body').innerHTML=data.customers.map(c=>`<tr><td>${c.name}</td><td class="num">${fmt(c.revenue)}</td><td class="num">${pct(c.pct*100)}</td></tr>`).join('')+`<tr><td style="color:var(--muted)">All others</td><td class="num">${fmt(data.otherRevenue)}</td><td class="num">—</td></tr>`;
+  buildChart(data);
+}
+
+// ── Budget vs Actual ───────────────────────────────────────────────────────
+async function loadBudget() {
+  const data = await apiFetch('/budget/vs-actual'); if(!data) return;
+  bvaData=data;
+  buildMonthTabs();
+  renderBvaYtd();
+  renderBvaMonth();
+  updateKpiBudget();
+}
+
+function setBvaView(view) {
+  bvaView=view;
+  document.getElementById('bva-ytd-view').style.display   = view==='ytd'   ?'':'none';
+  document.getElementById('bva-month-view').style.display = view==='month' ?'':'none';
+  document.getElementById('bva-ytd-btn').classList.toggle('active',   view==='ytd');
+  document.getElementById('bva-month-btn').classList.toggle('active', view==='month');
+}
+
+function buildMonthTabs() {
+  if(!bvaData) return;
+  const tabs = document.getElementById('month-tabs');
+  const months = bvaData.bva?.sales?.monthly || [];
+  selectedMonth = months.length ? months[months.length-1].month : 1;
+  tabs.innerHTML = months.map(m=>`<button class="month-tab${m.month===selectedMonth?' active':''}" onclick="selectMonth(${m.month})">${m.label}</button>`).join('');
+}
+
+function selectMonth(month) {
+  selectedMonth=month;
+  document.querySelectorAll('.month-tab').forEach(t=>t.classList.toggle('active', parseInt(t.textContent!==t.textContent)?false:false));
+  // re-render with new selection
+  const months = bvaData.bva?.sales?.monthly||[];
+  document.querySelectorAll('.month-tab').forEach((t,i)=>t.classList.toggle('active', months[i]?.month===month));
+  renderBvaMonth();
+}
+
+const BVA_LINES = [
+  { key:'sales',       label:'Sales',        divider:false },
+  { key:'cos',         label:'Cost of Sales', divider:false },
+  { key:'grossProfit', label:'Gross Profit',  divider:true  },
+  { key:'overheads',   label:'Overheads',     divider:false },
+  { key:'netProfit',   label:'Net Profit',    divider:true  },
+];
+
+function mgmtOn() { return document.getElementById('mgmt-toggle').checked; }
+function getAdj(lineName) {
+  return adjData.filter(a=>a.plLine===lineName).reduce((s,a)=>s+(parseFloat(a.amount)||0),0);
+}
+
+function varCell(variance, variancePct, isExpense=false) {
+  // For expenses/COS, over budget (positive variance) is bad
+  const isBad = isExpense ? variance > 0 : variance < 0;
+  const color  = !cfg.varColor ? '' : isBad ? 'var(--red)' : variance===0?'var(--muted)':'var(--green)';
+  const arrow  = variance>0?'▲':variance<0?'▼':'';
+  let html='';
+  if(cfg.varGbp) html+=`<td class="num" style="color:${color}">${arrow}${fmt(Math.abs(variance))}</td>`;
+  if(cfg.varPct) html+=`<td class="num" style="color:${color}">${variancePct>0?'+':''}${variancePct.toFixed(1)}%</td>`;
+  return html;
+}
+
+function renderBvaYtd() {
+  if(!bvaData) return;
+  const showAdj = mgmtOn() && cfg.mgmt;
+  const tbody = document.getElementById('bva-ytd-body');
+  const plAdjMap = { sales:'Revenue', cos:'Cost of sales', grossProfit:'Gross profit', overheads:'Overheads', netProfit:'Net income' };
+  tbody.innerHTML = BVA_LINES.map(line => {
+    const d      = bvaData.bva?.[line.key]?.ytd || {actual:0,budget:0,variance:0,variancePct:0};
+    const adjKey = plAdjMap[line.key];
+    const adj    = showAdj ? getAdj(adjKey) : 0;
+    const mgmtActual = d.actual + adj;
+    const isExp  = line.key==='cos'||line.key==='overheads';
+    return `<tr${line.divider?' class="bva-divider bold"':''}>
+      <td${line.divider?' class="bold"':''}>${line.label}</td>
+      <td class="num">${fmt(d.actual)}</td>
+      <td class="num" style="color:var(--muted)">${fmt(d.budget)}</td>
+      ${varCell(d.variance, d.variancePct, isExp)}
+      ${showAdj?`<td class="num" style="color:${adj!==0?'var(--green)':'var(--muted)'}">${adj!==0?fmt(adj):'—'}</td><td class="num bold">${fmt(mgmtActual)}</td>`:`<td class="num" style="color:var(--muted)">—</td><td class="num">—</td>`}
+    </tr>`;
+  }).join('');
+
+  // Update KPI budget indicators
+  updateKpiBudget();
+}
+
+function updateKpiBudget() {
+  if(!bvaData) return;
+  const pairs = [
+    ['kpi-rev-bud',  bvaData.bva?.sales?.ytd],
+    ['kpi-gp-bud',   bvaData.bva?.grossProfit?.ytd],
+    ['kpi-net-bud',  bvaData.bva?.netProfit?.ytd],
+  ];
+  pairs.forEach(([id, ytd]) => {
+    const el = document.getElementById(id);
+    if(!ytd||!el) return;
+    const isBad  = ytd.variance < 0;
+    const color  = cfg.varColor ? (isBad?'var(--red)':'var(--green)') : 'var(--muted)';
+    el.innerHTML = `<span style="color:${color};font-size:11px">Budget ${fmt(ytd.budget)} · ${ytd.variancePct>0?'+':''}${ytd.variancePct.toFixed(1)}%</span>`;
+    el.style.display='block';
+  });
+}
+
+function renderBvaMonth() {
+  if(!bvaData||!selectedMonth) return;
+  const tbody = document.getElementById('bva-month-body');
+  tbody.innerHTML = BVA_LINES.map(line => {
+    const monthly = bvaData.bva?.[line.key]?.monthly || [];
+    const d = monthly.find(m=>m.month===selectedMonth) || {actual:0,budget:0,variance:0,variancePct:0};
+    const isExp = line.key==='cos'||line.key==='overheads';
+    return `<tr${line.divider?' class="bva-divider bold"':''}>
+      <td${line.divider?' class="bold"':''}>${line.label}</td>
+      <td class="num">${fmt(d.actual)}</td>
+      <td class="num" style="color:var(--muted)">${fmt(d.budget)}</td>
+      ${varCell(d.variance, d.variancePct, isExp)}
+    </tr>`;
+  }).join('');
+}
+
+// ── Chart ──────────────────────────────────────────────────────────────────
+function buildChart(custData) {
+  if(chart) chart.destroy();
+  const now    = new Date().getMonth();
+  const labels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].slice(0,now+1);
+  const base   = custData.totalRevenue/(now+1);
+  const rev    = labels.map(()=>Math.round(base*(0.85+Math.random()*.3)));
+  const exp    = rev.map(r=>Math.round(r*(0.65+Math.random()*.1)));
+  const bud    = labels.map(()=>Math.round(base*1.05));
+  chart = new Chart(document.getElementById('rev-chart'),{
+    type:'bar',
+    data:{ labels, datasets:[
+      {label:'Revenue', data:rev, backgroundColor:'rgba(29,184,122,.7)', borderRadius:3},
+      {label:'Expenses',data:exp, backgroundColor:'rgba(224,82,82,.7)',  borderRadius:3},
+      {label:'Budget',  data:bud, type:'line', borderColor:'rgba(74,143,232,.8)', borderDash:[4,3], pointRadius:3, fill:false},
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ labels:{ color:'#8b90a8', font:{size:11}}}},
+      scales:{
+        x:{ grid:{display:false}, ticks:{color:'#8b90a8',font:{size:11}}},
+        y:{ grid:{color:'rgba(46,51,73,.5)'}, ticks:{color:'#8b90a8',font:{size:11},callback:v=>`${cfg.currency}${v}k`}},
+      }
+    }
+  });
+}
+
+// ── Adjustments ────────────────────────────────────────────────────────────
+function loadAdj() {
+  try { adjData=JSON.parse(localStorage.getItem('ceo_adj')||'[]'); } catch(e){ adjData=[]; }
+  renderAdj();
+}
+function renderAdj() {
+  const tbody=document.getElementById('adj-body');
+  if(!adjData.length){ tbody.innerHTML=`<tr><td colspan="6" style="color:var(--muted);padding:1rem 8px;font-size:12px">No adjustments yet.</td></tr>`; return; }
+  tbody.innerHTML=adjData.map((a,i)=>`<tr>
+    <td><input class="desc-input" value="${esc(a.desc)}" onchange="adjData[${i}].desc=this.value;renderBvaYtd()"></td>
+    <td><select class="adj-select" onchange="adjData[${i}].type=this.value">
+      ${['Accrual','Prepayment','Deferred revenue','Depreciation','Other'].map(t=>`<option${a.type===t?' selected':''}>${t}</option>`).join('')}
+    </select></td>
+    <td><select class="adj-select" onchange="adjData[${i}].plLine=this.value;renderBvaYtd()">
+      ${['Revenue','Cost of sales','Overheads','Gross profit','Net income'].map(l=>`<option${a.plLine===l?' selected':''}>${l}</option>`).join('')}
+    </select></td>
+    <td><input class="adj-input" type="number" value="${a.amount}" onchange="adjData[${i}].amount=Number(this.value);renderBvaYtd()"></td>
+    <td><input class="desc-input" value="${esc(a.source)}" onchange="adjData[${i}].source=this.value" style="width:110px"></td>
+    <td><button class="del-btn" onclick="adjData.splice(${i},1);renderAdj();renderBvaYtd()">×</button></td>
+  </tr>`).join('');
+}
+function addAdj() { adjData.push({desc:'New adjustment',type:'Accrual',plLine:'Revenue',amount:0,source:'Manual'}); renderAdj(); }
+function saveAdj() {
+  try { localStorage.setItem('ceo_adj',JSON.stringify(adjData)); } catch(e){}
+  const btn=document.querySelector('.btn-green'); const orig=btn.textContent;
+  btn.textContent='✓ Saved'; btn.disabled=true;
+  setTimeout(()=>{ btn.textContent=orig; btn.disabled=false; },1500);
+}
+function esc(s){ return(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+
+// ── Init ───────────────────────────────────────────────────────────────────
+loadCfg();
+checkSession();
+</script>
+</body>
+</html>

@@ -105,7 +105,7 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
       req.qbo,
       `SELECT Id, DocNumber, CustomerRef, Balance, DueDate, TotalAmt
        FROM Invoice
-       ORDERBY DueDate ASC MAXRESULTS ${limit}`
+       MAXRESULTS ${limit}`
     );
 
 const invoices = (data.QueryResponse?.Invoice || [])

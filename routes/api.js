@@ -99,7 +99,7 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
   try {
     if (!ensureQBO(req, res)) return;
 
-    const limit = Math.min(parseInt(req.query.limit || '50'), 200);
+    const limit = 1000;
 
     const data = await qboQuery(
       req.qbo,

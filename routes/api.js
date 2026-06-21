@@ -1,4 +1,3 @@
-
 import { Router } from 'express';
 import { qboReport, qboQuery } from '../lib/qbo.js';
 import { parsePL, parseBalanceSheet, parseCashFlow } from '../lib/parsers.js';
@@ -20,7 +19,7 @@ function ensureQBO(req, res) {
 }
 
 /**
- * ✅ Profit & Loss
+ * ✅ Profit & Loss (FIXED + SAFE)
  */
 apiRouter.get('/pl', async (req, res) => {
   try {
@@ -32,12 +31,21 @@ apiRouter.get('/pl', async (req, res) => {
       accounting_method: 'Accrual',
     };
 
-    if (req.query.summarize_column_by) {
-      params.summarize_column_by = req.query.summarize_column_by;
+    const raw = await qboReport(req.qbo, 'ProfitAndLoss', params);
+
+    // ✅ DEBUG — ALWAYS LOG RAW + PARSED
+    console.log('QBO RAW PL:', JSON.stringify(raw, null, 2));
+
+    const parsed = parsePL(raw);
+
+    console.log('PARSED PL:', parsed);
+
+    // ✅ SAFETY CHECK — prevents nonsense values like 136.73
+    if (!parsed || parsed.revenue < 1000) {
+      console.warn('⚠️ Suspicious revenue detected:', parsed?.revenue);
     }
 
-    const raw = await qboReport(req.qbo, 'ProfitAndLoss', params);
-    res.json(parsePL(raw));
+    res.json(parsed);
 
   } catch (err) {
     handleError(res, err);
@@ -56,7 +64,8 @@ apiRouter.get('/balance-sheet', async (req, res) => {
       accounting_method: 'Accrual',
     });
 
-    res.json(parseBalanceSheet(raw));
+    const parsed = parseBalanceSheet(raw);
+    res.json(parsed);
 
   } catch (err) {
     handleError(res, err);
@@ -75,7 +84,8 @@ apiRouter.get('/cash-flow', async (req, res) => {
       end_date:   req.query.end   || today(),
     });
 
-    res.json(parseCashFlow(raw));
+    const parsed = parseCashFlow(raw);
+    res.json(parsed);
 
   } catch (err) {
     handleError(res, err);
@@ -102,8 +112,8 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
       id:          inv.Id,
       number:      inv.DocNumber,
       customer:    inv.CustomerRef?.name,
-      balance:     parseFloat(inv.Balance),
-      total:       parseFloat(inv.TotalAmt),
+      balance:     safeNum(inv.Balance),
+      total:       safeNum(inv.TotalAmt),
       dueDate:     inv.DueDate,
       daysOverdue: daysOverdue(inv.DueDate),
     }));
@@ -111,8 +121,8 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
     res.json({
       invoices,
       totalOutstanding: invoices.reduce((s, i) => s + i.balance, 0),
-      count:            invoices.length,
-      overdueCount:     invoices.filter(i => i.daysOverdue > 0).length,
+      count: invoices.length,
+      overdueCount: invoices.filter(i => i.daysOverdue > 0).length,
     });
 
   } catch (err) {
@@ -128,8 +138,8 @@ apiRouter.get('/customers/top', async (req, res) => {
     if (!ensureQBO(req, res)) return;
 
     const raw = await qboReport(req.qbo, 'CustomerSales', {
-      start_date:          req.query.start || currentYearStart(),
-      end_date:            req.query.end   || today(),
+      start_date: req.query.start || currentYearStart(),
+      end_date:   req.query.end   || today(),
       summarize_column_by: 'Total',
     });
 
@@ -141,7 +151,7 @@ apiRouter.get('/customers/top', async (req, res) => {
           if (row.type === 'Data') {
             const cols = row.ColData || [];
             const name = cols[0]?.value;
-            const revenue = parseFloat(cols[1]?.value || '0');
+            const revenue = safeNum(cols[1]?.value);
 
             if (name && revenue > 0) {
               rows.push({ name, revenue });
@@ -153,9 +163,10 @@ apiRouter.get('/customers/top', async (req, res) => {
 
     rows.sort((a, b) => b.revenue - a.revenue);
 
-    const limit    = parseInt(req.query.limit || '10');
-    const topN     = rows.slice(0, limit);
-    const total    = rows.reduce((s, r) => s + r.revenue, 0);
+    const limit = parseInt(req.query.limit || '10');
+    const topN = rows.slice(0, limit);
+
+    const total = rows.reduce((s, r) => s + r.revenue, 0);
     const topTotal = topN.reduce((s, r) => s + r.revenue, 0);
 
     res.json({
@@ -180,8 +191,8 @@ apiRouter.get('/expenses', async (req, res) => {
     if (!ensureQBO(req, res)) return;
 
     const raw = await qboReport(req.qbo, 'ProfitAndLoss', {
-      start_date:        req.query.start || currentYearStart(),
-      end_date:          req.query.end   || today(),
+      start_date: req.query.start || currentYearStart(),
+      end_date:   req.query.end   || today(),
       accounting_method: 'Accrual',
     });
 
@@ -195,7 +206,7 @@ apiRouter.get('/expenses', async (req, res) => {
           if (row.type === 'Data') {
             const cols   = row.ColData || [];
             const name   = cols[0]?.value;
-            const amount = parseFloat(cols[1]?.value || '0');
+            const amount = safeNum(cols[1]?.value);
 
             if (name && amount !== 0) {
               expenses.push({ name, amount });
@@ -234,8 +245,13 @@ function daysOverdue(d) {
   return diff > 0 ? diff : 0;
 }
 
+function safeNum(v) {
+  const n = parseFloat(v);
+  return isNaN(n) ? 0 : n;
+}
+
 /**
- * ✅ Proper error handling (NO MORE 503 BLACK BOX)
+ * ✅ Error handling
  */
 function handleError(res, err) {
   console.error('API ERROR:', err.response?.data || err.message);

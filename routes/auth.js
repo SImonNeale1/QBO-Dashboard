@@ -1,4 +1,4 @@
-javascriptimport { Router } from 'express';
+import { Router } from 'express';
 import crypto from 'crypto';
 import { buildAuthUrl, exchangeCodeForTokens } from '../lib/qbo.js';
 import { saveQboTokens, getQboTokens, pool } from '../lib/db.js';

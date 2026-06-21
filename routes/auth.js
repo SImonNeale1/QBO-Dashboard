@@ -1,4 +1,3 @@
-Replace the entire contents of routes/auth.js with this:
 javascriptimport { Router } from 'express';
 import crypto from 'crypto';
 import { buildAuthUrl, exchangeCodeForTokens } from '../lib/qbo.js';

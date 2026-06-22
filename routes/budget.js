@@ -1,5 +1,5 @@
 /**
- * routes/budget.js — QBO Budget vs Actual (FINAL WORKING VERSION)
+ * routes/budget.js — QBO Budget vs Actual (FINAL + YTD)
  */
 
 import { Router } from 'express';
@@ -59,31 +59,27 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     const allBudgets = (budgetData.QueryResponse?.Budget || []);
 
-    // ✅ Only budgets with data
     const validBudgets = allBudgets.filter(b =>
       Array.isArray(b.BudgetDetail) && b.BudgetDetail.length > 0
     );
 
-    // ✅ Debug
     console.log('ALL BUDGETS:', validBudgets.map(b => b.Name));
 
-    // ✅ Pick current FY budget (e.g. "2026-27")
+    // ✅ Pick current FY (e.g. 2026-27)
     const fyLabel = `${year}-${(year+1).toString().slice(-2)}`;
 
     let budget = validBudgets.find(b =>
       (b.Name || '').includes(fyLabel)
     );
 
-    // ✅ fallback if no FY match
     if (!budget) {
       budget = validBudgets[0];
     }
 
     console.log('USING BUDGET:', budget?.Name);
-    console.log('SAMPLE LINE:', budget?.BudgetDetail?.[0]);
 
-    // ✅ 3. CALCULATE TOTALS
-    const budgetTotals = extractBudgetTotals(budget);
+    // ✅ 3. CALCULATE TOTALS (YTD)
+    const budgetTotals = extractBudgetTotalsYTD(budget);
 
     // ✅ 4. BUILD RESPONSE
     const bva = {
@@ -113,18 +109,24 @@ function buildLine(actual, budget) {
 }
 
 
-// ── Budget Helper ✅ FIXED FOR YOUR STRUCTURE ───────────────────────────────
-function extractBudgetTotals(budget) {
+// ── Budget Helper ✅ YTD LOGIC ──────────────────────────────────────────────
+function extractBudgetTotalsYTD(budget) {
   let revenue = 0;
   let costOfSales = 0;
   let expenses = 0;
 
+  const currentMonth = new Date().getMonth(); // 0 = Jan
+  const FY_START = 3; // April
+
   for (const line of budget?.BudgetDetail || []) {
 
     const name = (line.AccountRef?.name || '').toLowerCase();
-
-    // ✅ THIS IS THE CRITICAL FIX
     const amount = parseFloat(line.Amount || 0);
+
+    const month = new Date(line.BudgetDate).getMonth();
+
+    // ✅ Only include April → current month
+    if (month < FY_START || month > currentMonth) continue;
 
     if (/revenue|sales|turnover|income/i.test(name)) {
       revenue += amount;

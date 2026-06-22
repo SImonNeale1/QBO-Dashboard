@@ -1,11 +1,13 @@
 /**
- * routes/budget.js — QBO Budget vs Actual (FIX { Router } from 'express'; * routes/budget.js — QBO Budget vs Actual (FIXED + YTD SUPPORT)
+ * routes/budget.js — QBO Budget vs Actual (FIXED + YTD SUPPORT)
+ */
+
+import { Router } from 'express';
 import { qboQuery, qboReport } from '../lib/qbo.js';
 import { parsePL } from '../lib/parsers.js';
 
-
-const budgetRouter = Router();
-export { budgetRouter };
+// ✅ IMPORTANT: must be a named export exactly like this
+export const budgetRouter = Router();
 
 
 // ── List budgets ───────────────────────────────────────────────────────────
@@ -14,15 +16,21 @@ budgetRouter.get('/list', async (req, res) => {
     const data = await qboQuery(req.qbo,
       `SELECT * FROM Budget MAXRESULTS 20`
     );
+
     const budgets = (data.QueryResponse?.Budget || []).map(b => ({
       id:   b.Id,
       name: b.Name,
       year: b.BudgetDetail?.[0]?.BudgetPeriod || '',
       type: b.BudgetType,
     }));
+
     res.json({ budgets });
-  } catch (err) { handleError(res, err); }
+
+  } catch (err) {
+    handleError(res, err);
+  }
 });
+
 
 // ── Budget vs Actual ───────────────────────────────────────────────────────
 budgetRouter.get('/vs-actual', async (req, res) => {
@@ -31,10 +39,11 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     const now = new Date();
     const year = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+
     const start = `${year}-04-01`;
     const end   = new Date().toISOString().slice(0, 10);
 
-    // ✅ 1. GET ACTUALS (P&L YTD)
+    // ✅ 1. ACTUALS (YTD)
     const plRaw = await qboReport(req.qbo, 'ProfitAndLoss', {
       start_date: start,
       end_date: end,
@@ -44,7 +53,7 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     const actual = parsePL(plRaw);
 
-    // ✅ 2. GET BUDGET
+    // ✅ 2. BUDGET
     const budgetData = await qboQuery(
       req.qbo,
       `SELECT * FROM Budget WHERE Id='${budgetId}'`
@@ -52,10 +61,10 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     const budget = budgetData.QueryResponse?.Budget?.[0];
 
-    // ✅ 3. EXTRACT BUDGET TOTALS (YTD)
+    // ✅ 3. CALCULATE YTD BUDGET
     const budgetTotals = extractBudgetTotalsYTD(budget, start, end);
 
-    // ✅ 4. BUILD BVA
+    // ✅ 4. BUILD RESPONSE
     const bva = {
       revenue: {
         actual: actual.revenue,
@@ -92,7 +101,8 @@ budgetRouter.get('/vs-actual', async (req, res) => {
   }
 });
 
-// ── Budget Helper (FIXED + YTD FILTER) ─────────────────────────────────────
+
+// ── Budget Helper (FIXED) ──────────────────────────────────────────────────
 
 function extractBudgetTotalsYTD(budget, start, end) {
   let revenue = 0;
@@ -106,11 +116,9 @@ function extractBudgetTotalsYTD(budget, start, end) {
 
     const name = (line.AccountRef?.name || '').toLowerCase();
 
-    // ✅ Sum ONLY months within YTD range
     let total = 0;
 
     (line.BudgetDetailLine || []).forEach((m, idx) => {
-      // QBO budgets are month-indexed (Jan=0)
       const monthDate = new Date(startDate.getFullYear(), idx, 1);
 
       if (monthDate >= startDate && monthDate <= endDate) {
@@ -118,7 +126,6 @@ function extractBudgetTotalsYTD(budget, start, end) {
       }
     });
 
-    // ✅ Categorise accounts
     if (/revenue|sales|turnover|income/i.test(name)) {
       revenue += total;
 
@@ -146,5 +153,3 @@ function handleError(res, err) {
   console.error(err);
   res.status(err.status || 500).json({ error: err.message });
 }
- */
-

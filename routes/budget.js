@@ -1,16 +1,19 @@
 /**
- * routes/budget.js — Q.js'; * routes/budget.js — QBO Budget vs Actual (DEBUG VERSION)
+ * routes/budget.js — QBO Budget vs Actual (DEBUG VERSION - CLEAN)
+ */
+
+import { Router } from 'express';
+import { qboQuery, qboReport } from '../lib/qbo.js';
 import { parsePL } from '../lib/parsers.js';
 
+// ✅ REQUIRED EXPORT
 export const budgetRouter = Router();
 
 
 // ── List budgets ───────────────────────────────────────────────────────────
 budgetRouter.get('/list', async (req, res) => {
   try {
-    const data = await qboQuery(req.qbo,
-      `SELECT * FROM Budget MAXRESULTS 20`
-    );
+    const data = await qboQuery(req.qbo, `SELECT * FROM Budget MAXRESULTS 20`);
 
     const budgets = (data.QueryResponse?.Budget || []).map(b => ({
       id: b.Id,
@@ -36,9 +39,9 @@ budgetRouter.get('/vs-actual', async (req, res) => {
     const year = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
 
     const start = `${year}-04-01`;
-    const end   = new Date().toISOString().slice(0, 10);
+    const end = new Date().toISOString().slice(0, 10);
 
-    // ✅ 1. ACTUALS
+    // ✅ ACTUALS
     const plRaw = await qboReport(req.qbo, 'ProfitAndLoss', {
       start_date: start,
       end_date: end,
@@ -47,12 +50,8 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     const actual = parsePL(plRaw);
 
-    // ✅ 2. GET BUDGETS
-    const budgetData = await qboQuery(
-      req.qbo,
-      `SELECT * FROM Budget MAXRESULTS 20`
-    );
-
+    // ✅ GET BUDGETS
+    const budgetData = await qboQuery(req.qbo, `SELECT * FROM Budget MAXRESULTS 20`);
     const allBudgets = budgetData.QueryResponse?.Budget || [];
 
     const validBudgets = allBudgets.filter(b =>
@@ -62,7 +61,7 @@ budgetRouter.get('/vs-actual', async (req, res) => {
     console.log('ALL BUDGETS:', validBudgets.map(b => b.Name));
 
     // ✅ Pick FY budget
-    const fyLabel = `${year}-${(year+1).toString().slice(-2)}`;
+    const fyLabel = `${year}-${(year + 1).toString().slice(-2)}`;
 
     let budget = validBudgets.find(b =>
       (b.Name || '').includes(fyLabel)
@@ -74,10 +73,10 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     console.log('USING BUDGET:', budget?.Name);
 
-    // ✅ 3. DEBUG REVENUE
+    // ✅ DEBUG REVENUE
     const budgetTotals = extractBudgetTotalsDEBUG(budget);
 
-    // ✅ 4. OUTPUT
+    // ✅ RESPONSE
     const bva = {
       revenue: buildLine(actual.revenue, budgetTotals.revenue),
       costOfSales: buildLine(actual.costOfSales, budgetTotals.costOfSales),
@@ -95,7 +94,7 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 });
 
 
-// ── Helper ─────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────
 function buildLine(actual, budget) {
   return {
     actual,
@@ -105,7 +104,7 @@ function buildLine(actual, budget) {
 }
 
 
-// ── ✅ DEBUG VERSION ───────────────────────────────────────────────────────
+// ── DEBUG FUNCTION ─────────────────────────────────────────────────────────
 function extractBudgetTotalsDEBUG(budget) {
   let revenue = 0;
   let costOfSales = 0;
@@ -138,25 +137,23 @@ function extractBudgetTotalsDEBUG(budget) {
         month,
         amount
       });
-    }
 
-    else if (
+    } else if (
       /cost|cogs|direct|delivery|consultancy|shrinkage|stock/i.test(name)
     ) {
       costOfSales += amount;
-    }
 
-    else {
+    } else {
       expenses += amount;
     }
   }
 
-  // ✅ PRINT FULL BREAKDOWN
+  // ✅ PRINT BREAKDOWN
   console.log('----------------------------');
   console.log('REVENUE BREAKDOWN');
   console.log('----------------------------');
 
-  revenueLines.forEach(r => console.log(r));
+  revenueLines.forEach(line => console.log(line));
 
   console.log('----------------------------');
   console.log('REVENUE TOTAL:', revenue);
@@ -177,6 +174,3 @@ function handleError(res, err) {
   console.error(err);
   res.status(err.status || 500).json({ error: err.message });
 }
- */
-
-import { Router } from 'express';

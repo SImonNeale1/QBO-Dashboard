@@ -522,14 +522,10 @@ function renderBvaYtd() {
         <tr${line.divider?' class="bva-divider bold"':''}>
           <td>${line.label}</td>
           <td class="num">${fmt(d.actual)}</td>
+          <td class="num">${showAdj ? (adj ? fmt(adj) : '—') : '—'}</td>
+          <td class="num bold">${showAdj ? fmt(mgmtActual) : '—'}</td>
           <td class="num" style="color:var(--muted)">${fmt(d.budget)}</td>
-          ${varCell(d.variance,variancePct,isExpense)}
-          ${
-            showAdj
-            ? `<td class="num">${adj?fmt(adj):'—'}</td>
-               <td class="num bold">${fmt(d.actual+adj)}</td>`
-            : `<td class="num">—</td><td class="num">—</td>`
-          }
+          ${varCell(variance, variancePct, isExpense)}
         </tr>`;
     }).join('');
 

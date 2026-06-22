@@ -1,5 +1,5 @@
 /**
- * routes/budget.js — QBO Budget vs Actual (DEBUG VERSION - FIXED REVENUE)
+ * routes/budget.js — QBO Budget vs Actual (DEBUG VERSION - COS FIXED)
  */
 
 import { Router } from 'express';
@@ -98,7 +98,7 @@ function buildLine(actual, budget) {
 }
 
 
-// ── ✅ DEBUG FUNCTION (FIXED CLASSIFICATION) ───────────────────────────────
+// ── ✅ DEBUG FUNCTION (FINAL COS FIX) ──────────────────────────────────────
 function extractBudgetTotalsDEBUG(budget) {
   let revenue = 0;
   let costOfSales = 0;
@@ -109,6 +109,7 @@ function extractBudgetTotalsDEBUG(budget) {
   const currentFYMonth = (currentMonth - FY_START + 12) % 12;
 
   const revenueLines = [];
+  const cosLines = [];
 
   for (const line of budget?.BudgetDetail || []) {
 
@@ -121,13 +122,21 @@ function extractBudgetTotalsDEBUG(budget) {
 
     if (fyMonth > currentFYMonth) continue;
 
-    // ✅ FIXED CLASSIFICATION (ORDER MATTERS)
+    // ✅ FINAL CLASSIFICATION
 
-    // 1️⃣ COST OF SALES FIRST (PREVENTS LEAK INTO REVENUE)
-    if (/cost of sales|cost|cogs|direct|staff/i.test(name)) {
+    // COST OF SALES (expanded properly)
+    if (
+      /cost|cogs|delivery|consultancy|shrinkage|stock|direct|staff/i.test(name)
+    ) {
       costOfSales += amount;
 
-    // 2️⃣ TRUE REVENUE ONLY
+      cosLines.push({
+        account: name,
+        date,
+        amount
+      });
+
+    // REVENUE
     } else if (
       /sales of product income|shipping income|cgl sales/i.test(name)
     ) {
@@ -136,18 +145,16 @@ function extractBudgetTotalsDEBUG(budget) {
       revenueLines.push({
         account: name,
         date,
-        month,
         amount
       });
 
-    // 3️⃣ DISCOUNTS (NEGATIVE REVENUE)
+    // DISCOUNTS (reduce revenue)
     } else if (/discount/i.test(name)) {
       revenue += amount;
 
       revenueLines.push({
         account: name,
         date,
-        month,
         amount
       });
 
@@ -156,15 +163,19 @@ function extractBudgetTotalsDEBUG(budget) {
     }
   }
 
-  // ✅ PRINT BREAKDOWN
+  // ✅ DEBUG OUTPUT
   console.log('----------------------------');
-  console.log('REVENUE BREAKDOWN (FIXED)');
+  console.log('REVENUE BREAKDOWN');
   console.log('----------------------------');
-
   revenueLines.forEach(line => console.log(line));
 
   console.log('----------------------------');
-  console.log('REVENUE TOTAL:', revenue);
+  console.log('COS BREAKDOWN');
+  console.log('----------------------------');
+  cosLines.forEach(line => console.log(line));
+
+  console.log('----------------------------');
+  console.log('TOTALS:', { revenue, costOfSales, expenses });
   console.log('----------------------------');
 
   return {

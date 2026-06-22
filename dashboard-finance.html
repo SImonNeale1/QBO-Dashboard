@@ -420,7 +420,8 @@ async function loadInvoices() {
   const data=await apiFetch('/invoices/outstanding'); if(!data)return;
   invData=data;
   document.getElementById('kpi-ar').textContent=fmt(data.totalOutstanding);
-  document.getElementById('kpi-ar-sub').textContent=`${data.count} open invoices`;
+  document.getElementById('kpi-ar-sub').textContent =
+    `${fmt(data.overdueTotal)} overdue • ${data.overdueCount} invoices`;
   if(data.overdueCount>0)document.getElementById('inv-meta').textContent=`${data.overdueCount} overdue`;
   const top=data.invoices.slice(0,8);
   document.getElementById('inv-body').innerHTML=top.map(inv=>{

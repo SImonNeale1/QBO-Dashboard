@@ -1,9 +1,10 @@
 /**
- * routes/budget.js — QBO Budget vs Actual
+ * routes/budget.js — QBO Budget vs Actual (CUSTOM BUILT)
  */
 
 import { Router } from 'express';
 import { qboQuery, qboReport } from '../lib/qbo.js';
+import { parsePL } from '../lib/parsers.js';
 
 export const budgetRouter = Router();
 
@@ -23,7 +24,7 @@ budgetRouter.get('/list', async (req, res) => {
   } catch (err) { handleError(res, err); }
 });
 
-// ── Budget vs Actual ───────────────────────────────────────────────────────
+// ── Budget vs Actual (NEW WORKING VERSION) ─────────────────────────────────
 budgetRouter.get('/vs-actual', async (req, res) => {
   try {
     const budgetId = req.query.budgetId;
@@ -31,208 +32,96 @@ budgetRouter.get('/vs-actual', async (req, res) => {
     const now = new Date();
     const year = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
     const start = `${year}-04-01`;
-
     const end   = new Date().toISOString().slice(0, 10);
-    const month = new Date().getMonth() + 1;
 
-    let bvaRaw, plRaw;
+    // ✅ 1. GET ACTUALS (P&L)
+    const plRaw = await qboReport(req.qbo, 'ProfitAndLoss', {
+      start_date: start,
+      end_date: end,
+      accounting_method: 'Accrual',
+      summarize_column_by: 'Month'
+    });
 
-    // ✅ CRITICAL FIX — catch QBO errors (THIS stops the 500)
-    try {
-      [bvaRaw, plRaw] = await Promise.all([
-        qboReport(req.qbo, 'BudgetvsActual', {
-          budget_id: budgetId,
-          start_date: start,
-          end_date: end,
-          accounting_method: 'Accrual',
-        }),
-        qboReport(req.qbo, 'ProfitAndLoss', {
-          start_date: start,
-          end_date: end,
-          accounting_method: 'Accrual',
-          summarize_column_by: 'Month',
-        }),
-      ]);
-    } catch (e) {
-      console.error('QBO REPORT ERROR:', e.response?.data || e.message);
-      return res.json({
-        error: 'QBO REPORT FAILED',
-        details: e.message
-      });
-    }
+    const actual = parsePL(plRaw);
 
-    let bva = {};
-    try {
-      bva = parseBudgetVsActual(bvaRaw, year, month);
-    } catch (e) {
-      console.error('BVA PARSE ERROR:', e);
-    }
+    // ✅ 2. GET BUDGET
+    const budgetData = await qboQuery(
+      req.qbo,
+      `SELECT * FROM Budget WHERE Id='${budgetId}'`
+    );
 
-    let monthly = [];
-    try {
-      monthly = parseMonthlyPL(plRaw, year);
-    } catch (e) {
-      console.error('MONTHLY PARSE ERROR:', e);
-    }
+    const budget = budgetData.QueryResponse?.Budget?.[0];
 
-    res.json({ year, currentMonth: month, bva, monthly });
+    // ✅ 3. EXTRACT BUDGET TOTALS
+    const budgetTotals = extractBudgetTotals(budget);
+
+    // ✅ 4. BUILD BUDGET VS ACTUAL
+    const bva = {
+      revenue: {
+        actual: actual.revenue,
+        budget: budgetTotals.revenue,
+        variance: actual.revenue - budgetTotals.revenue
+      },
+      costOfSales: {
+        actual: actual.costOfSales,
+        budget: budgetTotals.costOfSales,
+        variance: actual.costOfSales - budgetTotals.costOfSales
+      },
+      grossProfit: {
+        actual: actual.grossProfit,
+        budget: budgetTotals.grossProfit,
+        variance: actual.grossProfit - budgetTotals.grossProfit
+      },
+      expenses: {
+        actual: actual.expenses,
+        budget: budgetTotals.expenses,
+        variance: actual.expenses - budgetTotals.expenses
+      },
+      netIncome: {
+        actual: actual.netIncome,
+        budget: budgetTotals.netIncome,
+        variance: actual.netIncome - budgetTotals.netIncome
+      }
+    };
+
+    res.json({ year, bva });
 
   } catch (err) {
-    console.error('ROUTE ERROR:', err);
+    console.error('BVA ERROR:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── Parsers ────────────────────────────────────────────────────────────────
+// ── Budget Helper ──────────────────────────────────────────────────────────
 
-function parseBudgetVsActual(raw, year, currentMonth) {
+function extractBudgetTotals(budget) {
+  let revenue = 0;
+  let costOfSales = 0;
+  let expenses = 0;
 
-  const months = Array.from({ length: 12 }, (_, i) => ({
-    month: i + 1,
-    label: new Date(year, i, 1).toLocaleString('en-GB', { month: 'short' }),
-  }));
+  for (const line of budget?.BudgetDetail || []) {
+    const amt = parseFloat(line.Amount || 0);
+    const name = (line.AccountRef?.name || '').toLowerCase();
 
-  const lines = [
-    { key: 'sales',      labels: ['income', 'revenue', 'sales'] },
-    { key: 'cos',        labels: ['cost of goods', 'cost of sales', 'cost of revenue'] },
-    { key: 'grossProfit',labels: ['gross profit'] },
-    { key: 'overheads',  labels: ['expenses', 'overheads', 'operating'] },
-    { key: 'netProfit',  labels: ['net income', 'net profit', 'net earnings'] },
-  ];
-
-  const result = {};
-
-  lines.forEach(l => {
-    result[l.key] = {
-      label: friendlyLabel(l.key),
-      monthly: months.slice(0, currentMonth).map(m => ({
-        month: m.month,
-        label: m.label,
-        actual: 0,
-        budget: 0,
-        variance: 0,
-        variancePct: 0
-      })),
-      ytd: { actual: 0, budget: 0, variance: 0, variancePct: 0 },
-    };
-  });
-
-  if (!raw || !raw.Rows || !raw.Rows.Row) return result;
-
-  for (const row of raw.Rows.Row) {
-
-    const header = (row.Header?.ColData?.[0]?.value || '').toLowerCase();
-    const matched = lines.find(l => l.labels.some(lb => header.includes(lb)));
-    if (!matched) continue;
-
-    const bucket = result[matched.key];
-
-    const summaryRow = findSummaryRow(row);
-    if (!summaryRow || !summaryRow.ColData) continue;
-
-    const cols = Array.isArray(summaryRow.ColData) ? summaryRow.ColData : [];
-
-    let colIdx = 1;
-
-    for (let m = 0; m < currentMonth; m++) {
-      if (colIdx + 2 >= cols.length) break;
-
-      const actual  = toNum(cols[colIdx]?.value);
-      const budget  = toNum(cols[colIdx + 1]?.value);
-
-      const variance = budget !== 0 ? actual - budget : 0;
-      const variancePct = budget !== 0
-        ? round((variance / Math.abs(budget)) * 100, 1)
-        : 0;
-
-      bucket.monthly[m] = {
-        ...bucket.monthly[m],
-        actual,
-        budget,
-        variance,
-        variancePct,
-      };
-
-      colIdx += 3;
+    if (name.includes('sales') || name.includes('revenue')) {
+      revenue += amt;
+    } else if (name.includes('cost')) {
+      costOfSales += amt;
+    } else {
+      expenses += amt;
     }
-
-    const ytdActual = toNum(cols[cols.length - 3]?.value);
-    const ytdBudget = toNum(cols[cols.length - 2]?.value);
-
-    const ytdVar = ytdBudget !== 0 ? ytdActual - ytdBudget : 0;
-    const ytdVarPct = ytdBudget !== 0
-      ? round((ytdVar / Math.abs(ytdBudget)) * 100, 1)
-      : 0;
-
-    bucket.ytd = {
-      actual: ytdActual,
-      budget: ytdBudget,
-      variance: ytdVar,
-      variancePct: ytdVarPct
-    };
   }
 
-  return result;
-}
-
-function parseMonthlyPL(raw, year) {
-  const months = [];
-
-  const headerRow = raw.Columns?.Column || [];
-  const monthCols = headerRow.slice(1).filter(c => c.ColType === 'Money');
-
-  for (const row of raw.Rows?.Row || []) {
-    const header = (row.Header?.ColData?.[0]?.value || '').toLowerCase();
-
-    if (!header.includes('income') && !header.includes('revenue') && !header.includes('sales')) continue;
-
-    const summaryRow = findSummaryRow(row);
-    if (!summaryRow) continue;
-
-    const cols = summaryRow.ColData || [];
-
-    monthCols.forEach((col, i) => {
-      months.push({
-        label: col.ColTitle || `Month ${i+1}`,
-        revenue: toNum(cols[i + 1]?.value),
-      });
-    });
-
-    break;
-  }
-
-  return months;
-}
-
-function findSummaryRow(section) {
-  if (section.Summary) return section.Summary;
-  if (section.ColData) return section;
-
-  for (const row of section.Rows?.Row || []) {
-    const found = findSummaryRow(row);
-    if (found) return found;
-  }
-  return null;
-}
-
-function friendlyLabel(key) {
   return {
-    sales:'Sales',
-    cos:'Cost of Sales',
-    grossProfit:'Gross Profit',
-    overheads:'Overheads',
-    netProfit:'Net Profit'
-  }[key] || key;
+    revenue,
+    costOfSales,
+    expenses,
+    grossProfit: revenue - costOfSales,
+    netIncome: revenue - costOfSales - expenses
+  };
 }
 
-function toNum(v) {
-  const n = parseFloat(v);
-  return isNaN(n) ? 0 : n;
-}
-
-function round(n, dp = 2) {
-  return Math.round(n * 10**dp) / 10**dp;
-}
+// ── Error Handler ──────────────────────────────────────────────────────────
 
 function handleError(res, err) {
   console.error(err);

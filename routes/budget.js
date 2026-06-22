@@ -103,10 +103,17 @@ function extractBudgetTotals(budget) {
     const amt = parseFloat(line.Amount || 0);
     const name = (line.AccountRef?.name || '').toLowerCase();
 
-    if (name.includes('sales') || name.includes('revenue')) {
+    // ✅ Much broader matching
+    if (
+      /revenue|sales|turnover|income/i.test(name)
+    ) {
       revenue += amt;
-    } else if (name.includes('cost')) {
+
+    } else if (
+      /cost|cogs|direct/i.test(name)
+    ) {
       costOfSales += amt;
+
     } else {
       expenses += amt;
     }
@@ -120,6 +127,7 @@ function extractBudgetTotals(budget) {
     netIncome: revenue - costOfSales - expenses
   };
 }
+
 
 // ── Error Handler ──────────────────────────────────────────────────────────
 

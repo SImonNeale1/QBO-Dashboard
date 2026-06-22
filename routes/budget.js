@@ -59,26 +59,31 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     const allBudgets = (budgetData.QueryResponse?.Budget || []);
 
+    // ✅ Only budgets with data
     const validBudgets = allBudgets.filter(b =>
       Array.isArray(b.BudgetDetail) && b.BudgetDetail.length > 0
     );
 
-    console.log('ALL BUDGETS:', allBudgets.map(b => ({
-      name: b.Name,
-      hasDetails: !!b.BudgetDetail
-    })));
+    // ✅ Debug
+    console.log('ALL BUDGETS:', validBudgets.map(b => b.Name));
 
-    let budget = validBudgets.find(b => b.Id === budgetId);
+    // ✅ Pick current FY budget (e.g. "2026-27")
+    const fyLabel = `${year}-${(year+1).toString().slice(-2)}`;
 
+    let budget = validBudgets.find(b =>
+      (b.Name || '').includes(fyLabel)
+    );
+
+    // ✅ fallback if no FY match
     if (!budget) {
       budget = validBudgets[0];
     }
 
     console.log('USING BUDGET:', budget?.Name);
-    console.log('BUDGET SAMPLE:', JSON.stringify(budget?.BudgetDetail?.[0], null, 2));
+    console.log('SAMPLE LINE:', budget?.BudgetDetail?.[0]);
 
     // ✅ 3. CALCULATE TOTALS
-    const budgetTotals = extractBudgetTotals(budget, start, end);
+    const budgetTotals = extractBudgetTotals(budget);
 
     // ✅ 4. BUILD RESPONSE
     const bva = {
@@ -108,24 +113,18 @@ function buildLine(actual, budget) {
 }
 
 
-// ── Budget Helper (✅ FIXED FOR YOUR STRUCTURE + YTD) ───────────────────────
-function extractBudgetTotals(budget, start, end) {
+// ── Budget Helper ✅ FIXED FOR YOUR STRUCTURE ───────────────────────────────
+function extractBudgetTotals(budget) {
   let revenue = 0;
   let costOfSales = 0;
   let expenses = 0;
-
-  const startDate = new Date(start);
-  const endDate   = new Date(end);
 
   for (const line of budget?.BudgetDetail || []) {
 
     const name = (line.AccountRef?.name || '').toLowerCase();
 
-    const lineDate = new Date(line.BudgetDate);
+    // ✅ THIS IS THE CRITICAL FIX
     const amount = parseFloat(line.Amount || 0);
-
-    // ✅ Only include YTD (April to today)
-    if (lineDate < startDate || lineDate > endDate) continue;
 
     if (/revenue|sales|turnover|income/i.test(name)) {
       revenue += amount;
@@ -153,4 +152,3 @@ function handleError(res, err) {
   console.error(err);
   res.status(err.status || 500).json({ error: err.message });
 }
-``

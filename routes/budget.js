@@ -28,7 +28,6 @@ budgetRouter.get('/vs-actual', async (req, res) => {
   try {
     const budgetId = req.query.budgetId;
 
-    // ✅ Financial year (April)
     const now = new Date();
     const year = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
     const start = `${year}-04-01`;
@@ -36,31 +35,52 @@ budgetRouter.get('/vs-actual', async (req, res) => {
     const end   = new Date().toISOString().slice(0, 10);
     const month = new Date().getMonth() + 1;
 
-    const [bvaRaw, plRaw] = await Promise.all([
-      qboReport(req.qbo, 'BudgetvsActual', {
-        budget_id: budgetId,
-        start_date: start,
-        end_date: end,
-        accounting_method: 'Accrual',
-      }),
-      qboReport(req.qbo, 'ProfitAndLoss', {
-        start_date: start,
-        end_date: end,
-        accounting_method: 'Accrual',
-        summarize_column_by: 'Month',
-      }),
-    ]);
+    let bvaRaw, plRaw;
 
-    if (!bvaRaw || !bvaRaw.Rows) {
-      return res.json({ year, currentMonth: month, bva: {}, monthly: [] });
+    // ✅ CRITICAL FIX — catch QBO errors (THIS stops the 500)
+    try {
+      [bvaRaw, plRaw] = await Promise.all([
+        qboReport(req.qbo, 'BudgetvsActual', {
+          budget_id: budgetId,
+          start_date: start,
+          end_date: end,
+          accounting_method: 'Accrual',
+        }),
+        qboReport(req.qbo, 'ProfitAndLoss', {
+          start_date: start,
+          end_date: end,
+          accounting_method: 'Accrual',
+          summarize_column_by: 'Month',
+        }),
+      ]);
+    } catch (e) {
+      console.error('QBO REPORT ERROR:', e.response?.data || e.message);
+      return res.json({
+        error: 'QBO REPORT FAILED',
+        details: e.message
+      });
     }
 
-    const bva = parseBudgetVsActual(bvaRaw, year, month);
-    const monthly = parseMonthlyPL(plRaw, year);
+    let bva = {};
+    try {
+      bva = parseBudgetVsActual(bvaRaw, year, month);
+    } catch (e) {
+      console.error('BVA PARSE ERROR:', e);
+    }
+
+    let monthly = [];
+    try {
+      monthly = parseMonthlyPL(plRaw, year);
+    } catch (e) {
+      console.error('MONTHLY PARSE ERROR:', e);
+    }
 
     res.json({ year, currentMonth: month, bva, monthly });
 
-  } catch (err) { handleError(res, err); }
+  } catch (err) {
+    console.error('ROUTE ERROR:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Parsers ────────────────────────────────────────────────────────────────
@@ -97,7 +117,6 @@ function parseBudgetVsActual(raw, year, currentMonth) {
     };
   });
 
-  // ✅ CRITICAL FIX: safe guard
   if (!raw || !raw.Rows || !raw.Rows.Row) return result;
 
   for (const row of raw.Rows.Row) {
@@ -109,8 +128,6 @@ function parseBudgetVsActual(raw, year, currentMonth) {
     const bucket = result[matched.key];
 
     const summaryRow = findSummaryRow(row);
-
-    // ✅ CRITICAL FIX: stop crash
     if (!summaryRow || !summaryRow.ColData) continue;
 
     const cols = Array.isArray(summaryRow.ColData) ? summaryRow.ColData : [];

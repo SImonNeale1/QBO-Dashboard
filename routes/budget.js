@@ -27,20 +27,28 @@ budgetRouter.get('/list', async (req, res) => {
 });
 
 // ── Budget vs Actual ───────────────────────────────────────────────────────
-// GET /api/budget/vs-actual?year=2026
+// GET /api/budget/vs-actual?budgetId=xxxx
 budgetRouter.get('/vs-actual', async (req, res) => {
   try {
-    const year  = parseInt(req.query.year || new Date().getFullYear());
-    const start = `${year}-01-01`;
+    // ✅ ADDED: get selected budget
+    const budgetId = req.query.budgetId;
+
+    // ✅ FIXED: financial year (April start)
+    const now  = new Date();
+    const year = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+    const start = `${year}-04-01`;
+
     const end   = new Date().toISOString().slice(0, 10); // YTD
     const month = new Date().getMonth() + 1; // current month number
 
     // Pull Budget vs Actual report from QBO
     const [bvaRaw, plRaw] = await Promise.all([
       qboReport(req.qbo, 'BudgetvsActual', {
-        start_date:        start,
-        end_date:          end,
-        accounting_method: 'Accrual',
+        // ✅ ADDED: budget_id (THIS WAS MISSING)
+        budget_id:        budgetId,
+        start_date:       start,
+        end_date:         end,
+        accounting_method:'Accrual',
       }),
       qboReport(req.qbo, 'ProfitAndLoss', {
         start_date:             start,
@@ -49,6 +57,11 @@ budgetRouter.get('/vs-actual', async (req, res) => {
         summarize_column_by:    'Month',
       }),
     ]);
+
+    // ✅ OPTIONAL SAFETY (prevents 500 if QBO behaves oddly)
+    if (!bvaRaw || !bvaRaw.Rows) {
+      return res.json({ year, currentMonth: month, bva: {}, monthly: [] });
+    }
 
     // Parse Budget vs Actual report
     const bva = parseBudgetVsActual(bvaRaw, year, month);
@@ -88,7 +101,6 @@ function parseBudgetVsActual(raw, year, currentMonth) {
     };
   });
 
-  // Walk the QBO report rows
   for (const row of raw.Rows?.Row || []) {
     const header = (row.Header?.ColData?.[0]?.value || '').toLowerCase();
     const matched = lines.find(l => l.labels.some(lb => header.includes(lb)));
@@ -96,33 +108,43 @@ function parseBudgetVsActual(raw, year, currentMonth) {
 
     const bucket = result[matched.key];
 
-    // QBO BudgetvsActual columns: Label | Jan Actual | Jan Budget | Jan Variance | ... | YTD Actual | YTD Budget | YTD Variance
     const summaryRow = findSummaryRow(row);
     if (!summaryRow) continue;
 
     const cols = summaryRow.ColData || [];
-    // First col is label, then groups of 3 per month (actual, budget, variance)
-    // Then YTD group at end
+
     let colIdx = 1;
     for (let m = 0; m < currentMonth; m++) {
       if (colIdx + 2 >= cols.length) break;
+
       const actual  = toNum(cols[colIdx]?.value);
       const budget  = toNum(cols[colIdx + 1]?.value);
       const variance = budget !== 0 ? actual - budget : 0;
-      const variancePct = budget !== 0 ? round((variance / Math.abs(budget)) * 100, 1) : 0;
+      const variancePct = budget !== 0
+        ? round((variance / Math.abs(budget)) * 100, 1)
+        : 0;
+
       bucket.monthly[m] = {
         ...bucket.monthly[m],
         actual, budget, variance, variancePct,
       };
+
       colIdx += 3;
     }
 
-    // YTD — last 3 cols before end
     const ytdActual  = toNum(cols[cols.length - 3]?.value);
     const ytdBudget  = toNum(cols[cols.length - 2]?.value);
     const ytdVar     = ytdBudget !== 0 ? ytdActual - ytdBudget : 0;
-    const ytdVarPct  = ytdBudget !== 0 ? round((ytdVar / Math.abs(ytdBudget)) * 100, 1) : 0;
-    bucket.ytd = { actual: ytdActual, budget: ytdBudget, variance: ytdVar, variancePct: ytdVarPct };
+    const ytdVarPct  = ytdBudget !== 0
+      ? round((ytdVar / Math.abs(ytdBudget)) * 100, 1)
+      : 0;
+
+    bucket.ytd = {
+      actual: ytdActual,
+      budget: ytdBudget,
+      variance: ytdVar,
+      variancePct: ytdVarPct
+    };
   }
 
   return result;
@@ -130,45 +152,64 @@ function parseBudgetVsActual(raw, year, currentMonth) {
 
 function parseMonthlyPL(raw, year) {
   const months = [];
-  // Find column headers (month names)
   const headerRow = raw.Columns?.Column || [];
   const monthCols = headerRow.slice(1).filter(c => c.ColType === 'Money');
 
   for (const row of raw.Rows?.Row || []) {
     const header = (row.Header?.ColData?.[0]?.value || '').toLowerCase();
     if (!header.includes('income') && !header.includes('revenue') && !header.includes('sales')) continue;
+
     const summaryRow = findSummaryRow(row);
     if (!summaryRow) continue;
+
     const cols = summaryRow.ColData || [];
+
     monthCols.forEach((col, i) => {
       months.push({
         label: col.ColTitle || `Month ${i+1}`,
         revenue: toNum(cols[i + 1]?.value),
       });
     });
+
     break;
   }
+
   return months;
 }
 
 function findSummaryRow(section) {
   if (section.Summary) return section.Summary;
   if (section.ColData)  return section;
+
   for (const row of section.Rows?.Row || []) {
     const found = findSummaryRow(row);
     if (found) return found;
   }
+
   return null;
 }
 
 function friendlyLabel(key) {
-  return { sales:'Sales', cos:'Cost of Sales', grossProfit:'Gross Profit',
-           overheads:'Overheads', netProfit:'Net Profit' }[key] || key;
+  return {
+    sales:'Sales',
+    cos:'Cost of Sales',
+    grossProfit:'Gross Profit',
+    overheads:'Overheads',
+    netProfit:'Net Profit'
+  }[key] || key;
 }
 
-function toNum(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
-function round(n, dp = 2) { return Math.round(n * 10**dp) / 10**dp; }
+function toNum(v) {
+  const n = parseFloat(v);
+  return isNaN(n) ? 0 : n;
+}
+
+function round(n, dp = 2) {
+  return Math.round(n * 10**dp) / 10**dp;
+}
+
 function handleError(res, err) {
   console.error(err);
   res.status(err.status || 500).json({ error: err.message });
 }
+``

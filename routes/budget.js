@@ -1,8 +1,5 @@
 /**
- * routes/budget.js — QBO Budget vs Actual (CUSTOM BUILT)
- */
-
-import { Router } from 'express';
+ * routes/budget.js — QBO Budget vs Actual (FIX { Router } from 'express'; * routes/budget.js — QBO Budget vs Actual (FIXED + YTD SUPPORT)
 import { qboQuery, qboReport } from '../lib/qbo.js';
 import { parsePL } from '../lib/parsers.js';
 
@@ -24,7 +21,7 @@ budgetRouter.get('/list', async (req, res) => {
   } catch (err) { handleError(res, err); }
 });
 
-// ── Budget vs Actual (NEW WORKING VERSION) ─────────────────────────────────
+// ── Budget vs Actual ───────────────────────────────────────────────────────
 budgetRouter.get('/vs-actual', async (req, res) => {
   try {
     const budgetId = req.query.budgetId;
@@ -34,7 +31,7 @@ budgetRouter.get('/vs-actual', async (req, res) => {
     const start = `${year}-04-01`;
     const end   = new Date().toISOString().slice(0, 10);
 
-    // ✅ 1. GET ACTUALS (P&L)
+    // ✅ 1. GET ACTUALS (P&L YTD)
     const plRaw = await qboReport(req.qbo, 'ProfitAndLoss', {
       start_date: start,
       end_date: end,
@@ -52,10 +49,10 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     const budget = budgetData.QueryResponse?.Budget?.[0];
 
-    // ✅ 3. EXTRACT BUDGET TOTALS
-    const budgetTotals = extractBudgetTotals(budget);
+    // ✅ 3. EXTRACT BUDGET TOTALS (YTD)
+    const budgetTotals = extractBudgetTotalsYTD(budget, start, end);
 
-    // ✅ 4. BUILD BUDGET VS ACTUAL
+    // ✅ 4. BUILD BVA
     const bva = {
       revenue: {
         actual: actual.revenue,
@@ -92,30 +89,41 @@ budgetRouter.get('/vs-actual', async (req, res) => {
   }
 });
 
-// ── Budget Helper ──────────────────────────────────────────────────────────
+// ── Budget Helper (FIXED + YTD FILTER) ─────────────────────────────────────
 
-function extractBudgetTotals(budget) {
+function extractBudgetTotalsYTD(budget, start, end) {
   let revenue = 0;
   let costOfSales = 0;
   let expenses = 0;
 
+  const startDate = new Date(start);
+  const endDate   = new Date(end);
+
   for (const line of budget?.BudgetDetail || []) {
-    const amt = parseFloat(line.Amount || 0);
+
     const name = (line.AccountRef?.name || '').toLowerCase();
 
-    // ✅ Much broader matching
-    if (
-      /revenue|sales|turnover|income/i.test(name)
-    ) {
-      revenue += amt;
+    // ✅ Sum ONLY months within YTD range
+    let total = 0;
 
-    } else if (
-      /cost|cogs|direct/i.test(name)
-    ) {
-      costOfSales += amt;
+    (line.BudgetDetailLine || []).forEach((m, idx) => {
+      // QBO budgets are month-indexed (Jan=0)
+      const monthDate = new Date(startDate.getFullYear(), idx, 1);
+
+      if (monthDate >= startDate && monthDate <= endDate) {
+        total += parseFloat(m.Amount || 0);
+      }
+    });
+
+    // ✅ Categorise accounts
+    if (/revenue|sales|turnover|income/i.test(name)) {
+      revenue += total;
+
+    } else if (/cost|cogs|direct/i.test(name)) {
+      costOfSales += total;
 
     } else {
-      expenses += amt;
+      expenses += total;
     }
   }
 
@@ -135,3 +143,5 @@ function handleError(res, err) {
   console.error(err);
   res.status(err.status || 500).json({ error: err.message });
 }
+ */
+

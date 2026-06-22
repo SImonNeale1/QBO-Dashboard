@@ -1,12 +1,11 @@
 /**
- * routes/budget.js — QBO Budget vs Actual (FIXED + YTD SUPPORT)
+ * routes/budget.js — QBO Budget vs Actual (ROBUST FIX)
  */
 
 import { Router } from 'express';
 import { qboQuery, qboReport } from '../lib/qbo.js';
 import { parsePL } from '../lib/parsers.js';
 
-// ✅ IMPORTANT: must be a named export exactly like this
 export const budgetRouter = Router();
 
 
@@ -43,7 +42,7 @@ budgetRouter.get('/vs-actual', async (req, res) => {
     const start = `${year}-04-01`;
     const end   = new Date().toISOString().slice(0, 10);
 
-    // ✅ 1. ACTUALS (YTD)
+    // ✅ 1. ACTUALS
     const plRaw = await qboReport(req.qbo, 'ProfitAndLoss', {
       start_date: start,
       end_date: end,
@@ -61,36 +60,20 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     const budget = budgetData.QueryResponse?.Budget?.[0];
 
-    // ✅ 3. CALCULATE YTD BUDGET
+    // ✅ DEBUG (leave this in for now)
+    console.log('RAW BUDGET SAMPLE:', JSON.stringify(budget?.BudgetDetail?.[0], null, 2));
+    console.log('LINES COUNT:', budget?.BudgetDetail?.length);
+
+    // ✅ 3. CALCULATE BUDGET
     const budgetTotals = extractBudgetTotalsYTD(budget, start, end);
 
     // ✅ 4. BUILD RESPONSE
     const bva = {
-      revenue: {
-        actual: actual.revenue,
-        budget: budgetTotals.revenue,
-        variance: actual.revenue - budgetTotals.revenue
-      },
-      costOfSales: {
-        actual: actual.costOfSales,
-        budget: budgetTotals.costOfSales,
-        variance: actual.costOfSales - budgetTotals.costOfSales
-      },
-      grossProfit: {
-        actual: actual.grossProfit,
-        budget: budgetTotals.grossProfit,
-        variance: actual.grossProfit - budgetTotals.grossProfit
-      },
-      expenses: {
-        actual: actual.expenses,
-        budget: budgetTotals.expenses,
-        variance: actual.expenses - budgetTotals.expenses
-      },
-      netIncome: {
-        actual: actual.netIncome,
-        budget: budgetTotals.netIncome,
-        variance: actual.netIncome - budgetTotals.netIncome
-      }
+      revenue: buildLine(actual.revenue, budgetTotals.revenue),
+      costOfSales: buildLine(actual.costOfSales, budgetTotals.costOfSales),
+      grossProfit: buildLine(actual.grossProfit, budgetTotals.grossProfit),
+      expenses: buildLine(actual.expenses, budgetTotals.expenses),
+      netIncome: buildLine(actual.netIncome, budgetTotals.netIncome)
     };
 
     res.json({ year, bva });
@@ -102,30 +85,52 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 });
 
 
-// ── Budget Helper (FIXED) ──────────────────────────────────────────────────
+// ── Helper: build consistent line ──────────────────────────────────────────
+function buildLine(actual, budget) {
+  return {
+    actual,
+    budget,
+    variance: actual - budget
+  };
+}
 
+
+// ── Budget Extraction (ROBUST FIX) ─────────────────────────────────────────
 function extractBudgetTotalsYTD(budget, start, end) {
   let revenue = 0;
   let costOfSales = 0;
   let expenses = 0;
 
-  const startDate = new Date(start);
-  const endDate   = new Date(end);
+  // ✅ Determine how many months from April to now
+  const monthsIntoYear = (new Date(end).getMonth() - 3 + 12) % 12 + 1;
 
   for (const line of budget?.BudgetDetail || []) {
 
     const name = (line.AccountRef?.name || '').toLowerCase();
 
+    // ✅ DEBUG
+    console.log('ACCOUNT:', name);
+    console.log('DETAIL:', line);
+
     let total = 0;
 
-    (line.BudgetDetailLine || []).forEach((m, idx) => {
-      const monthDate = new Date(startDate.getFullYear(), idx, 1);
+    // ✅ CASE 1: Monthly structure (standard QBO)
+    if (Array.isArray(line.BudgetDetailLine)) {
 
-      if (monthDate >= startDate && monthDate <= endDate) {
-        total += parseFloat(m.Amount || 0);
-      }
-    });
+      const relevantMonths = line.BudgetDetailLine.slice(3, 3 + monthsIntoYear);
 
+      total = relevantMonths.reduce((sum, m) => {
+        return sum + parseFloat(m.Amount || 0);
+      }, 0);
+
+    }
+
+    // ✅ CASE 2: Fallback (flat budget structure)
+    if (!total && line.Amount) {
+      total = parseFloat(line.Amount || 0);
+    }
+
+    // ✅ Categorisation
     if (/revenue|sales|turnover|income/i.test(name)) {
       revenue += total;
 
@@ -148,7 +153,6 @@ function extractBudgetTotalsYTD(budget, start, end) {
 
 
 // ── Error Handler ──────────────────────────────────────────────────────────
-
 function handleError(res, err) {
   console.error(err);
   res.status(err.status || 500).json({ error: err.message });

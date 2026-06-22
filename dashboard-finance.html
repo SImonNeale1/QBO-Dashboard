@@ -510,13 +510,17 @@ function renderBvaYtd() {
     actual
   };
 
-      const variancePct = d.budget!==0
-        ? (d.variance/Math.abs(d.budget))*100
-        : 0;
+  const adj = showAdj ? getAdj(plAdjMap[line.key]) : 0;
 
-      const adj = showAdj ? getAdj(plAdjMap[line.key]) : 0;
+  // ✅ ADD THESE (this is what was missing)
+  const mgmtActual = d.actual + adj;
+  const variance = mgmtActual - d.budget;
 
-      const isExpense = line.key==='costOfSales' || line.key==='expenses';
+  const variancePct = d.budget !== 0
+    ? (variance / Math.abs(d.budget)) * 100
+    : 0;
+
+  const isExpense = line.key==='costOfSales' || line.key==='expenses';
 
       return `
         <tr${line.divider?' class="bva-divider bold"':''}>

@@ -3,7 +3,10 @@
 import { qboQuery, qboReport } from '../lib/qbo.js';
 import { parsePL } from '../lib/parsers.js';
 
-export const budgetRouter = Router();
+
+const budgetRouter = Router();
+export { budgetRouter };
+
 
 // ── List budgets ───────────────────────────────────────────────────────────
 budgetRouter.get('/list', async (req, res) => {

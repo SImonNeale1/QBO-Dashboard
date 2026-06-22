@@ -1,5 +1,5 @@
 /**
- * routes/budget.js — QBO Budget vs Actual (DEBUG VERSION - COS FIXED)
+ * routes/budget.js — QBO Budget vs Actual (DEBUG VERSION - FINAL COS FIX)
  */
 
 import { Router } from 'express';
@@ -98,7 +98,7 @@ function buildLine(actual, budget) {
 }
 
 
-// ── ✅ DEBUG FUNCTION (FINAL COS FIX) ──────────────────────────────────────
+// ── ✅ FINAL DEBUG FUNCTION (STRICT COS) ───────────────────────────────────
 function extractBudgetTotalsDEBUG(budget) {
   let revenue = 0;
   let costOfSales = 0;
@@ -122,48 +122,38 @@ function extractBudgetTotalsDEBUG(budget) {
 
     if (fyMonth > currentFYMonth) continue;
 
-    // ✅ FINAL CLASSIFICATION
-
-    // COST OF SALES (expanded properly)
+    // ✅ STRICT COS ONLY (FIXED)
     if (
-      /cost|cogs|delivery|consultancy|shrinkage|stock|direct|staff/i.test(name)
+      /cost of sales/i.test(name) ||
+      /delivery/i.test(name) ||
+      /technical consultancy/i.test(name) ||
+      /shrinkage/i.test(name) ||
+      /stock/i.test(name)
     ) {
       costOfSales += amount;
 
-      cosLines.push({
-        account: name,
-        date,
-        amount
-      });
+      cosLines.push({ account: name, date, amount });
 
-    // REVENUE
+    // ✅ REVENUE
     } else if (
       /sales of product income|shipping income|cgl sales/i.test(name)
     ) {
       revenue += amount;
 
-      revenueLines.push({
-        account: name,
-        date,
-        amount
-      });
+      revenueLines.push({ account: name, date, amount });
 
-    // DISCOUNTS (reduce revenue)
+    // ✅ DISCOUNTS
     } else if (/discount/i.test(name)) {
       revenue += amount;
 
-      revenueLines.push({
-        account: name,
-        date,
-        amount
-      });
+      revenueLines.push({ account: name, date, amount });
 
     } else {
       expenses += amount;
     }
   }
 
-  // ✅ DEBUG OUTPUT
+  // DEBUG OUTPUT
   console.log('----------------------------');
   console.log('REVENUE BREAKDOWN');
   console.log('----------------------------');

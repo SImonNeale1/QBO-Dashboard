@@ -1,12 +1,11 @@
 /**
- * routes/budget.js — QBO Budget vs Actual (DEBUG VERSION - CLEAN)
+ * routes/budget.js — QBO Budget vs Actual (DEBUG VERSION - FIXED REVENUE)
  */
 
 import { Router } from 'express';
 import { qboQuery, qboReport } from '../lib/qbo.js';
 import { parsePL } from '../lib/parsers.js';
 
-// ✅ REQUIRED EXPORT
 export const budgetRouter = Router();
 
 
@@ -41,7 +40,6 @@ budgetRouter.get('/vs-actual', async (req, res) => {
     const start = `${year}-04-01`;
     const end = new Date().toISOString().slice(0, 10);
 
-    // ✅ ACTUALS
     const plRaw = await qboReport(req.qbo, 'ProfitAndLoss', {
       start_date: start,
       end_date: end,
@@ -50,7 +48,6 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     const actual = parsePL(plRaw);
 
-    // ✅ GET BUDGETS
     const budgetData = await qboQuery(req.qbo, `SELECT * FROM Budget MAXRESULTS 20`);
     const allBudgets = budgetData.QueryResponse?.Budget || [];
 
@@ -60,7 +57,6 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     console.log('ALL BUDGETS:', validBudgets.map(b => b.Name));
 
-    // ✅ Pick FY budget
     const fyLabel = `${year}-${(year + 1).toString().slice(-2)}`;
 
     let budget = validBudgets.find(b =>
@@ -73,10 +69,8 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     console.log('USING BUDGET:', budget?.Name);
 
-    // ✅ DEBUG REVENUE
     const budgetTotals = extractBudgetTotalsDEBUG(budget);
 
-    // ✅ RESPONSE
     const bva = {
       revenue: buildLine(actual.revenue, budgetTotals.revenue),
       costOfSales: buildLine(actual.costOfSales, budgetTotals.costOfSales),
@@ -104,7 +98,7 @@ function buildLine(actual, budget) {
 }
 
 
-// ── DEBUG FUNCTION ─────────────────────────────────────────────────────────
+// ── ✅ DEBUG FUNCTION (FIXED CLASSIFICATION) ───────────────────────────────
 function extractBudgetTotalsDEBUG(budget) {
   let revenue = 0;
   let costOfSales = 0;
@@ -127,8 +121,16 @@ function extractBudgetTotalsDEBUG(budget) {
 
     if (fyMonth > currentFYMonth) continue;
 
-    if (/revenue|sales|turnover|income/i.test(name)) {
+    // ✅ FIXED CLASSIFICATION (ORDER MATTERS)
 
+    // 1️⃣ COST OF SALES FIRST (PREVENTS LEAK INTO REVENUE)
+    if (/cost of sales|cost|cogs|direct|staff/i.test(name)) {
+      costOfSales += amount;
+
+    // 2️⃣ TRUE REVENUE ONLY
+    } else if (
+      /sales of product income|shipping income|cgl sales/i.test(name)
+    ) {
       revenue += amount;
 
       revenueLines.push({
@@ -138,10 +140,16 @@ function extractBudgetTotalsDEBUG(budget) {
         amount
       });
 
-    } else if (
-      /cost|cogs|direct|delivery|consultancy|shrinkage|stock/i.test(name)
-    ) {
-      costOfSales += amount;
+    // 3️⃣ DISCOUNTS (NEGATIVE REVENUE)
+    } else if (/discount/i.test(name)) {
+      revenue += amount;
+
+      revenueLines.push({
+        account: name,
+        date,
+        month,
+        amount
+      });
 
     } else {
       expenses += amount;
@@ -150,7 +158,7 @@ function extractBudgetTotalsDEBUG(budget) {
 
   // ✅ PRINT BREAKDOWN
   console.log('----------------------------');
-  console.log('REVENUE BREAKDOWN');
+  console.log('REVENUE BREAKDOWN (FIXED)');
   console.log('----------------------------');
 
   revenueLines.forEach(line => console.log(line));

@@ -518,23 +518,6 @@ function renderBvaYtd() {
     }).join('');
 
   updateKpiBudget();
-} renderBvaYtd() {
-  if(!bvaData)return;
-  const showAdj=mgmtOn()&&cfg.mgmt;
-  const plAdjMap={sales:'Revenue',cos:'Cost of sales',grossProfit:'Gross profit',overheads:'Overheads',netProfit:'Net income'};
-  document.getElementById('bva-ytd-body').innerHTML=BVA_LINES.map(line=>{
-    const d=bvaData.bva?.[line.key]?.ytd||{actual:0,budget:0,variance:0,variancePct:0};
-    const adj=showAdj?getAdj(plAdjMap[line.key]):0;
-    const isExp=line.key==='cos'||line.key==='overheads';
-    return`<tr${line.divider?' class="bva-divider bold"':''}>
-      <td${line.divider?' class="bold"':''}>${line.label}</td>
-      <td class="num">${fmt(d.actual)}</td>
-      <td class="num" style="color:var(--muted)">${fmt(d.budget)}</td>
-      ${varCell(d.variance,d.variancePct,isExp)}
-      ${showAdj?`<td class="num" style="color:${adj!==0?'var(--green)':'var(--muted)'}">${adj!==0?fmt(adj):'—'}</td><td class="num bold">${fmt(d.actual+adj)}</td>`:`<td class="num" style="color:var(--muted)">—</td><td class="num">—</td>`}
-    </tr>`;
-  }).join('');
-  updateKpiBudget();
 }
 function updateKpiBudget() {
   if(!bvaData || !bvaData.bva) return;
@@ -564,14 +547,7 @@ function updateKpiBudget() {
   });
 }
 function renderBvaMonth() {}
-`` renderBvaMonth() {
-  if(!bvaData||!selectedMonth)return;
-  document.getElementById('bva-month-body').innerHTML=BVA_LINES.map(line=>{
-    const d=(bvaData.bva?.[line.key]?.monthly||[]).find(m=>m.month===selectedMonth)||{actual:0,budget:0,variance:0,variancePct:0};
-    return`<tr${line.divider?' class="bva-divider bold"':''}><td${line.divider?' class="bold"':''}>${line.label}</td><td class="num">${fmt(d.actual)}</td><td class="num" style="color:var(--muted)">${fmt(d.budget)}</td>${varCell(d.variance,d.variancePct,line.key==='cos'||line.key==='overheads')}</tr>`;
-  }).join('');
-}
-
+  
 // ── Chart ──────────────────────────────────────────────────────────────────
 function buildChart(custData) {
   if(chart)chart.destroy();

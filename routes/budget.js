@@ -1,11 +1,46 @@
 /**
- * routes/budget.js — QBO const now = new Date(); * routes/budget.js — QBO Budget vs Actual (FINAL + YTD + DEDUPED)
+ * routes/budget.js — QBO Budget vs Actual (FINAL + STABLE)
+ */
+
+import { Router } from 'express';
+import { qboQuery, qboReport } from '../lib/qbo.js';
+import { parsePL } from '../lib/parsers.js';
+
+export const budgetRouter = Router();
+
+
+// ── List budgets ───────────────────────────────────────────────────────────
+budgetRouter.get('/list', async (req, res) => {
+  try {
+    const data = await qboQuery(req.qbo, `SELECT * FROM Budget MAXRESULTS 20`);
+
+    const budgets = (data.QueryResponse?.Budget || []).map(b => ({
+      id: b.Id,
+      name: b.Name,
+      year: b.BudgetDetail?.[0]?.BudgetPeriod || '',
+      type: b.BudgetType,
+    }));
+
+    res.json({ budgets });
+
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+
+// ── Budget vs Actual ───────────────────────────────────────────────────────
+budgetRouter.get('/vs-actual', async (req, res) => {
+  try {
+    const budgetId = req.query.budgetId;
+
+    const now = new Date();
     const year = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
 
     const start = `${year}-04-01`;
     const end   = new Date().toISOString().slice(0, 10);
 
-    // ✅ 1. ACTUALS
+    // 1. ACTUALS
     const plRaw = await qboReport(req.qbo, 'ProfitAndLoss', {
       start_date: start,
       end_date: end,
@@ -14,13 +49,10 @@
 
     const actual = parsePL(plRaw);
 
-    // ✅ 2. GET ALL BUDGETS
-    const budgetData = await qboQuery(
-      req.qbo,
-      `SELECT * FROM Budget MAXRESULTS 20`
-    );
+    // 2. GET BUDGETS
+    const budgetData = await qboQuery(req.qbo, `SELECT * FROM Budget MAXRESULTS 20`);
 
-    const allBudgets = (budgetData.QueryResponse?.Budget || []);
+    const allBudgets = budgetData.QueryResponse?.Budget || [];
 
     const validBudgets = allBudgets.filter(b =>
       Array.isArray(b.BudgetDetail) && b.BudgetDetail.length > 0
@@ -28,8 +60,8 @@
 
     console.log('ALL BUDGETS:', validBudgets.map(b => b.Name));
 
-    // ✅ Pick correct FY budget
-    const fyLabel = `${year}-${(year+1).toString().slice(-2)}`;
+    // Pick current FY budget
+    const fyLabel = `${year}-${(year + 1).toString().slice(-2)}`;
 
     let budget = validBudgets.find(b =>
       (b.Name || '').includes(fyLabel)
@@ -41,10 +73,10 @@
 
     console.log('USING BUDGET:', budget?.Name);
 
-    // ✅ 3. CALCULATE TOTALS (FIXED)
+    // 3. CALCULATE
     const budgetTotals = extractBudgetTotalsYTD(budget);
 
-    // ✅ 4. BUILD RESPONSE
+    // 4. RESPONSE
     const bva = {
       revenue: buildLine(actual.revenue, budgetTotals.revenue),
       costOfSales: buildLine(actual.costOfSales, budgetTotals.costOfSales),
@@ -62,7 +94,7 @@
 });
 
 
-// ── Helper ─────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────
 function buildLine(actual, budget) {
   return {
     actual,
@@ -72,18 +104,17 @@ function buildLine(actual, budget) {
 }
 
 
-// ── ✅ FINAL BUDGET LOGIC (YTD + NO DOUBLE COUNTING) ───────────────────────
+// ── FINAL YTD LOGIC ───────────────────────────────────────────────────────
 function extractBudgetTotalsYTD(budget) {
   let revenue = 0;
   let costOfSales = 0;
   let expenses = 0;
 
   const currentMonth = new Date().getMonth();
-  const FY_START = 3; // April
+  const FY_START = 3;
 
   const currentFYMonth = (currentMonth - FY_START + 12) % 12;
 
-  // ✅ Prevent duplicate months (key fix)
   const seen = new Set();
 
   for (const line of budget?.BudgetDetail || []) {
@@ -94,15 +125,12 @@ function extractBudgetTotalsYTD(budget) {
     const month = new Date(line.BudgetDate).getMonth();
     const fyMonth = (month - FY_START + 12) % 12;
 
-    // ✅ Only YTD months
     if (fyMonth > currentFYMonth) continue;
 
-    // ✅ CRITICAL: only one value per month per account
     const key = `${name}-${month}`;
     if (seen.has(key)) continue;
     seen.add(key);
 
-    // ✅ Better COS mapping
     if (/revenue|sales|turnover|income/i.test(name)) {
       revenue += amount;
 
@@ -131,39 +159,3 @@ function handleError(res, err) {
   console.error(err);
   res.status(err.status || 500).json({ error: err.message });
 }
- */
-
-import { Router } from 'express';
-import { qboQuery, qboReport } from '../lib/qbo.js';
-import { parsePL } from '../lib/parsers.js';
-
-export const budgetRouter = Router();
-
-
-// ── List budgets ───────────────────────────────────────────────────────────
-budgetRouter.get('/list', async (req, res) => {
-  try {
-    const data = await qboQuery(req.qbo,
-      `SELECT * FROM Budget MAXRESULTS 20`
-    );
-
-    const budgets = (data.QueryResponse?.Budget || []).map(b => ({
-      id:   b.Id,
-      name: b.Name,
-      year: b.BudgetDetail?.[0]?.BudgetPeriod || '',
-      type: b.BudgetType,
-    }));
-
-    res.json({ budgets });
-
-  } catch (err) {
-    handleError(res, err);
-  }
-});
-
-
-// ── Budget vs Actual ───────────────────────────────────────────────────────
-budgetRouter.get('/vs-actual', async (req, res) => {
-  try {
-    const budgetId = req.query.budgetId;
-

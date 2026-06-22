@@ -237,9 +237,16 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
+
 function currentYearStart() {
-  return `${new Date().getFullYear()}-01-01`;
+  const now = new Date();
+  const year = now.getMonth() >= 3 
+    ? now.getFullYear() 
+    : now.getFullYear() - 1;
+
+  return `${year}-04-01`;
 }
+
 
 function daysOverdue(d) {
   if (!d) return 0;

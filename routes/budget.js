@@ -1,5 +1,5 @@
 /**
- * routes/budget.js — QBO Budget vs Actual (FINAL FIX)
+ * routes/budget.js — QBO Budget vs Actual (FINAL WORKING VERSION)
  */
 
 import { Router } from 'express';
@@ -59,21 +59,17 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     const allBudgets = (budgetData.QueryResponse?.Budget || []);
 
-    // ✅ Filter ONLY valid budgets (this is the critical fix)
     const validBudgets = allBudgets.filter(b =>
       Array.isArray(b.BudgetDetail) && b.BudgetDetail.length > 0
     );
 
-    // ✅ Debug: see what's available
     console.log('ALL BUDGETS:', allBudgets.map(b => ({
       name: b.Name,
       hasDetails: !!b.BudgetDetail
     })));
 
-    // ✅ Try selected budget first
     let budget = validBudgets.find(b => b.Id === budgetId);
 
-    // ✅ Fallback to first valid one
     if (!budget) {
       budget = validBudgets[0];
     }
@@ -82,7 +78,7 @@ budgetRouter.get('/vs-actual', async (req, res) => {
     console.log('BUDGET SAMPLE:', JSON.stringify(budget?.BudgetDetail?.[0], null, 2));
 
     // ✅ 3. CALCULATE TOTALS
-    const budgetTotals = extractBudgetTotals(budget);
+    const budgetTotals = extractBudgetTotals(budget, start, end);
 
     // ✅ 4. BUILD RESPONSE
     const bva = {
@@ -112,28 +108,33 @@ function buildLine(actual, budget) {
 }
 
 
-// ── Budget Helper ──────────────────────────────────────────────────────────
-function extractBudgetTotals(budget) {
+// ── Budget Helper (✅ FIXED FOR YOUR STRUCTURE + YTD) ───────────────────────
+function extractBudgetTotals(budget, start, end) {
   let revenue = 0;
   let costOfSales = 0;
   let expenses = 0;
+
+  const startDate = new Date(start);
+  const endDate   = new Date(end);
 
   for (const line of budget?.BudgetDetail || []) {
 
     const name = (line.AccountRef?.name || '').toLowerCase();
 
-    const total = (line.BudgetDetailLine || []).reduce((sum, m) => {
-      return sum + parseFloat(m.Amount || 0);
-    }, 0);
+    const lineDate = new Date(line.BudgetDate);
+    const amount = parseFloat(line.Amount || 0);
+
+    // ✅ Only include YTD (April to today)
+    if (lineDate < startDate || lineDate > endDate) continue;
 
     if (/revenue|sales|turnover|income/i.test(name)) {
-      revenue += total;
+      revenue += amount;
 
     } else if (/cost|cogs|direct/i.test(name)) {
-      costOfSales += total;
+      costOfSales += amount;
 
     } else {
-      expenses += total;
+      expenses += amount;
     }
   }
 
@@ -152,3 +153,4 @@ function handleError(res, err) {
   console.error(err);
   res.status(err.status || 500).json({ error: err.message });
 }
+``

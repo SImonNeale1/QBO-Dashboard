@@ -493,16 +493,22 @@ function renderBvaYtd() {
   document.getElementById('bva-ytd-body').innerHTML =
     BVA_LINES.map(line=>{
       
-    const lineData = bvaData.bva[line.key];
+  const base = bvaData.bva[line.key] || {actual:0,budget:0,variance:0};
 
-    const actual = (lineData?.monthly || [])
-      .reduce((sum, m) => sum + (m.actual || 0), 0);
+  const actualMap = {
+    revenue: plData?.revenue,
+    costOfSales: plData?.costOfSales,
+    grossProfit: plData?.grossProfit,
+    expenses: plData?.expenses,
+    netIncome: plData?.netIncome
+  };
 
-    const d = {
-      ...lineData,
-      actual
-    };
+  const actual = actualMap[line.key] ?? base.actual;
 
+  const d = {
+    ...base,
+    actual
+  };
 
       const variancePct = d.budget!==0
         ? (d.variance/Math.abs(d.budget))*100

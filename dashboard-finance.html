@@ -457,24 +457,14 @@ function setBvaView(view) {
   document.getElementById('bva-ytd-btn').classList.toggle('active',view==='ytd');
   document.getElementById('bva-month-btn').classList.toggle('active',view==='month');
 }
-function buildMonthTabs() {
-  if(!bvaData)return;
-  const months=bvaData.bva?.sales?.monthly||[];
-  selectedMonth=months.length?months[months.length-1].month:1;
-  document.getElementById('month-tabs').innerHTML=months.map(m=>`<button class="month-tab${m.month===selectedMonth?' active':''}" onclick="selectMonth(${m.month})">${m.label}</button>`).join('');
-}
-function selectMonth(month) {
-  selectedMonth=month;
-  const months=bvaData.bva?.sales?.monthly||[];
-  document.querySelectorAll('.month-tab').forEach((t,i)=>t.classList.toggle('active',months[i]?.month===month));
-  renderBvaMonth();
-}
+function buildMonthTabs() {}
+function selectMonth() {}
 const BVA_LINES=[
-  {key:'sales',label:'Sales',divider:false},
-  {key:'cos',label:'Cost of Sales',divider:false},
+  {key:'revenue',label:'Revenue',divider:false},
+  {key:'costOfSales',label:'Cost of Sales',divider:false},
   {key:'grossProfit',label:'Gross Profit',divider:true},
-  {key:'overheads',label:'Overheads',divider:false},
-  {key:'netProfit',label:'Net Profit',divider:true},
+  {key:'expenses',label:'Expenses',divider:false},
+  {key:'netIncome',label:'Net Profit',divider:true},
 ];
 function mgmtOn(){return document.getElementById('mgmt-toggle').checked;}
 function getAdj(lineName){return adjData.filter(a=>a.plLine===lineName).reduce((s,a)=>s+(parseFloat(a.amount)||0),0);}
@@ -488,6 +478,47 @@ function varCell(variance,variancePct,isExpense=false) {
   return html;
 }
 function renderBvaYtd() {
+  if(!bvaData || !bvaData.bva) return;
+
+  const showAdj = mgmtOn() && cfg.mgmt;
+
+  const plAdjMap={
+    revenue:'Revenue',
+    costOfSales:'Cost of sales',
+    grossProfit:'Gross profit',
+    expenses:'Overheads',
+    netIncome:'Net income'
+  };
+
+  document.getElementById('bva-ytd-body').innerHTML =
+    BVA_LINES.map(line=>{
+      const d = bvaData.bva[line.key] || {actual:0,budget:0,variance:0};
+
+      const variancePct = d.budget!==0
+        ? (d.variance/Math.abs(d.budget))*100
+        : 0;
+
+      const adj = showAdj ? getAdj(plAdjMap[line.key]) : 0;
+
+      const isExpense = line.key==='costOfSales' || line.key==='expenses';
+
+      return `
+        <tr${line.divider?' class="bva-divider bold"':''}>
+          <td>${line.label}</td>
+          <td class="num">${fmt(d.actual)}</td>
+          <td class="num" style="color:var(--muted)">${fmt(d.budget)}</td>
+          ${varCell(d.variance,variancePct,isExpense)}
+          ${
+            showAdj
+            ? `<td class="num">${adj?fmt(adj):'—'}</td>
+               <td class="num bold">${fmt(d.actual+adj)}</td>`
+            : `<td class="num">—</td><td class="num">—</td>`
+          }
+        </tr>`;
+    }).join('');
+
+  updateKpiBudget();
+} renderBvaYtd() {
   if(!bvaData)return;
   const showAdj=mgmtOn()&&cfg.mgmt;
   const plAdjMap={sales:'Revenue',cos:'Cost of sales',grossProfit:'Gross profit',overheads:'Overheads',netProfit:'Net income'};
@@ -506,15 +537,34 @@ function renderBvaYtd() {
   updateKpiBudget();
 }
 function updateKpiBudget() {
-  if(!bvaData)return;
-  [['kpi-rev-bud',bvaData.bva?.sales?.ytd],['kpi-gp-bud',bvaData.bva?.grossProfit?.ytd],['kpi-net-bud',bvaData.bva?.netProfit?.ytd]].forEach(([id,ytd])=>{
-    const el=document.getElementById(id); if(!ytd||!el)return;
-    const color=cfg.varColor?(ytd.variance<0?'var(--red)':'var(--green)'):'var(--muted)';
-    el.innerHTML=`<span style="color:${color};font-size:11px">Budget ${fmt(ytd.budget)} · ${ytd.variancePct>0?'+':''}${ytd.variancePct.toFixed(1)}%</span>`;
+  if(!bvaData || !bvaData.bva) return;
+
+  [['kpi-rev-bud','revenue'],
+   ['kpi-gp-bud','grossProfit'],
+   ['kpi-net-bud','netIncome']]
+  .forEach(([id,key])=>{
+    const d=bvaData.bva[key];
+    if(!d) return;
+
+    const variancePct = d.budget!==0
+      ? (d.variance/Math.abs(d.budget))*100
+      : 0;
+
+    const el=document.getElementById(id);
+
+    const color=cfg.varColor
+      ? (d.variance<0?'var(--red)':'var(--green)')
+      : 'var(--muted)';
+
+    el.innerHTML=`<span style="color:${color}">
+      Budget ${fmt(d.budget)} · ${variancePct.toFixed(1)}%
+    </span>`;
+
     el.style.display='block';
   });
 }
-function renderBvaMonth() {
+function renderBvaMonth() {}
+`` renderBvaMonth() {
   if(!bvaData||!selectedMonth)return;
   document.getElementById('bva-month-body').innerHTML=BVA_LINES.map(line=>{
     const d=(bvaData.bva?.[line.key]?.monthly||[]).find(m=>m.month===selectedMonth)||{actual:0,budget:0,variance:0,variancePct:0};

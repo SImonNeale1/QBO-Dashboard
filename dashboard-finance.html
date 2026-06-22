@@ -510,7 +510,23 @@ function renderBvaYtd() {
     actual
   };
 
-  const adj = showAdj ? getAdj(plAdjMap[line.key]) : 0;
+   let adj = showAdj ? getAdj(plAdjMap[line.key]) : 0;
+
+   // ✅ DERIVED ADJUSTMENTS
+   if (line.key === 'grossProfit') {
+     const revAdj = getAdj('Revenue');
+     const cosAdj = getAdj('Cost of sales');
+     adj = revAdj - cosAdj;
+   }
+
+   if (line.key === 'netIncome') {
+     const revAdj = getAdj('Revenue');
+     const cosAdj = getAdj('Cost of sales');
+     const expAdj = getAdj('Overheads');
+
+     const gpAdj = revAdj - cosAdj;
+     adj = gpAdj - expAdj;
+   }
 
   // ✅ ADD THESE (this is what was missing)
   const mgmtActual = d.actual + adj;

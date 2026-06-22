@@ -1,9 +1,5 @@
 /**
- * routes/budget.js — QBO Budget vs Actual (FINAL + STABLE)
- */
-
-import { Router } from 'express';
-import { qboQuery, qboReport } from '../lib/qbo.js';
+ * routes/budget.js — Q.js'; * routes/budget.js — QBO Budget vs Actual (DEBUG VERSION)
 import { parsePL } from '../lib/parsers.js';
 
 export const budgetRouter = Router();
@@ -12,7 +8,9 @@ export const budgetRouter = Router();
 // ── List budgets ───────────────────────────────────────────────────────────
 budgetRouter.get('/list', async (req, res) => {
   try {
-    const data = await qboQuery(req.qbo, `SELECT * FROM Budget MAXRESULTS 20`);
+    const data = await qboQuery(req.qbo,
+      `SELECT * FROM Budget MAXRESULTS 20`
+    );
 
     const budgets = (data.QueryResponse?.Budget || []).map(b => ({
       id: b.Id,
@@ -40,7 +38,7 @@ budgetRouter.get('/vs-actual', async (req, res) => {
     const start = `${year}-04-01`;
     const end   = new Date().toISOString().slice(0, 10);
 
-    // 1. ACTUALS
+    // ✅ 1. ACTUALS
     const plRaw = await qboReport(req.qbo, 'ProfitAndLoss', {
       start_date: start,
       end_date: end,
@@ -49,8 +47,11 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     const actual = parsePL(plRaw);
 
-    // 2. GET BUDGETS
-    const budgetData = await qboQuery(req.qbo, `SELECT * FROM Budget MAXRESULTS 20`);
+    // ✅ 2. GET BUDGETS
+    const budgetData = await qboQuery(
+      req.qbo,
+      `SELECT * FROM Budget MAXRESULTS 20`
+    );
 
     const allBudgets = budgetData.QueryResponse?.Budget || [];
 
@@ -60,8 +61,8 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     console.log('ALL BUDGETS:', validBudgets.map(b => b.Name));
 
-    // Pick current FY budget
-    const fyLabel = `${year}-${(year + 1).toString().slice(-2)}`;
+    // ✅ Pick FY budget
+    const fyLabel = `${year}-${(year+1).toString().slice(-2)}`;
 
     let budget = validBudgets.find(b =>
       (b.Name || '').includes(fyLabel)
@@ -73,10 +74,10 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     console.log('USING BUDGET:', budget?.Name);
 
-    // 3. CALCULATE
-    const budgetTotals = extractBudgetTotalsYTD(budget);
+    // ✅ 3. DEBUG REVENUE
+    const budgetTotals = extractBudgetTotalsDEBUG(budget);
 
-    // 4. RESPONSE
+    // ✅ 4. OUTPUT
     const bva = {
       revenue: buildLine(actual.revenue, budgetTotals.revenue),
       costOfSales: buildLine(actual.costOfSales, budgetTotals.costOfSales),
@@ -94,7 +95,7 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 });
 
 
-// ── Helpers ───────────────────────────────────────────────────────────────
+// ── Helper ─────────────────────────────────────────────────────────────────
 function buildLine(actual, budget) {
   return {
     actual,
@@ -104,45 +105,62 @@ function buildLine(actual, budget) {
 }
 
 
-// ── FINAL YTD LOGIC ───────────────────────────────────────────────────────
-function extractBudgetTotalsYTD(budget) {
+// ── ✅ DEBUG VERSION ───────────────────────────────────────────────────────
+function extractBudgetTotalsDEBUG(budget) {
   let revenue = 0;
   let costOfSales = 0;
   let expenses = 0;
 
   const currentMonth = new Date().getMonth();
   const FY_START = 3;
-
   const currentFYMonth = (currentMonth - FY_START + 12) % 12;
 
-  const seen = new Set();
+  const revenueLines = [];
 
   for (const line of budget?.BudgetDetail || []) {
 
     const name = (line.AccountRef?.name || '').toLowerCase();
     const amount = parseFloat(line.Amount || 0);
 
-    const month = new Date(line.BudgetDate).getMonth();
+    const date = line.BudgetDate;
+    const month = new Date(date).getMonth();
     const fyMonth = (month - FY_START + 12) % 12;
 
     if (fyMonth > currentFYMonth) continue;
 
-    const key = `${name}-${month}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-
     if (/revenue|sales|turnover|income/i.test(name)) {
+
       revenue += amount;
 
-    } else if (
+      revenueLines.push({
+        account: name,
+        date,
+        month,
+        amount
+      });
+    }
+
+    else if (
       /cost|cogs|direct|delivery|consultancy|shrinkage|stock/i.test(name)
     ) {
       costOfSales += amount;
+    }
 
-    } else {
+    else {
       expenses += amount;
     }
   }
+
+  // ✅ PRINT FULL BREAKDOWN
+  console.log('----------------------------');
+  console.log('REVENUE BREAKDOWN');
+  console.log('----------------------------');
+
+  revenueLines.forEach(r => console.log(r));
+
+  console.log('----------------------------');
+  console.log('REVENUE TOTAL:', revenue);
+  console.log('----------------------------');
 
   return {
     revenue,
@@ -159,3 +177,6 @@ function handleError(res, err) {
   console.error(err);
   res.status(err.status || 500).json({ error: err.message });
 }
+ */
+
+import { Router } from 'express';

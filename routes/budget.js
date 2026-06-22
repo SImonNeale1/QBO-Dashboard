@@ -1,5 +1,5 @@
 /**
- * routes/budget.js — QBO Budget vs Actual (DEBUG VERSION - FINAL COS FIX)
+ * routes/budget.js — QBO Budget vs Actual (DEBUG VERSION - FINAL)
  */
 
 import { Router } from 'express';
@@ -98,7 +98,7 @@ function buildLine(actual, budget) {
 }
 
 
-// ── ✅ FINAL DEBUG FUNCTION (STRICT COS) ───────────────────────────────────
+// ── ✅ FINAL DEBUG FUNCTION (CORRECT COS CLASSIFICATION) ───────────────────
 function extractBudgetTotalsDEBUG(budget) {
   let revenue = 0;
   let costOfSales = 0;
@@ -122,13 +122,17 @@ function extractBudgetTotalsDEBUG(budget) {
 
     if (fyMonth > currentFYMonth) continue;
 
-    // ✅ STRICT COS ONLY (FIXED)
+    // ✅ CORRECT COS LOGIC (distinguish inbound vs outbound)
+
     if (
       /cost of sales/i.test(name) ||
-      /delivery/i.test(name) ||
+
+      // ✅ ONLY delivery OUT (exclude "stock into us")
+      (/delivery/i.test(name) && /goods out/i.test(name)) ||
+
       /technical consultancy/i.test(name) ||
       /shrinkage/i.test(name) ||
-      /stock/i.test(name)
+      /stock shrinkage/i.test(name)
     ) {
       costOfSales += amount;
 

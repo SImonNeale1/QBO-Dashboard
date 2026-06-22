@@ -1,5 +1,5 @@
 /**
- * routes/budget.js — QBO Budget vs Actual (FIXED + WORKING)
+ * routes/budget.js — QBO Budget vs Actual (FINAL FIX)
  */
 
 import { Router } from 'express';
@@ -51,18 +51,34 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     const actual = parsePL(plRaw);
 
-    // ✅ 2. GET ALL BUDGETS (IMPORTANT FIX)
+    // ✅ 2. GET ALL BUDGETS
     const budgetData = await qboQuery(
       req.qbo,
       `SELECT * FROM Budget MAXRESULTS 20`
     );
 
-    // ✅ Find correct budget manually
-    const budget = (budgetData.QueryResponse?.Budget || [])
-      .find(b => b.Id === budgetId);
+    const allBudgets = (budgetData.QueryResponse?.Budget || []);
 
-    // ✅ DEBUG (keep for now)
-    console.log('SELECTED BUDGET:', budget?.Name);
+    // ✅ Filter ONLY valid budgets (this is the critical fix)
+    const validBudgets = allBudgets.filter(b =>
+      Array.isArray(b.BudgetDetail) && b.BudgetDetail.length > 0
+    );
+
+    // ✅ Debug: see what's available
+    console.log('ALL BUDGETS:', allBudgets.map(b => ({
+      name: b.Name,
+      hasDetails: !!b.BudgetDetail
+    })));
+
+    // ✅ Try selected budget first
+    let budget = validBudgets.find(b => b.Id === budgetId);
+
+    // ✅ Fallback to first valid one
+    if (!budget) {
+      budget = validBudgets[0];
+    }
+
+    console.log('USING BUDGET:', budget?.Name);
     console.log('BUDGET SAMPLE:', JSON.stringify(budget?.BudgetDetail?.[0], null, 2));
 
     // ✅ 3. CALCULATE TOTALS
@@ -96,7 +112,7 @@ function buildLine(actual, budget) {
 }
 
 
-// ── Budget Helper (SIMPLIFIED & RELIABLE) ──────────────────────────────────
+// ── Budget Helper ──────────────────────────────────────────────────────────
 function extractBudgetTotals(budget) {
   let revenue = 0;
   let costOfSales = 0;
@@ -106,7 +122,6 @@ function extractBudgetTotals(budget) {
 
     const name = (line.AccountRef?.name || '').toLowerCase();
 
-    // ✅ Sum ALL months (no slicing for now — keep simple + correct)
     const total = (line.BudgetDetailLine || []).reduce((sum, m) => {
       return sum + parseFloat(m.Amount || 0);
     }, 0);

@@ -545,9 +545,13 @@ function updateKpiBudget() {
     const d=bvaData.bva[key];
     if(!d) return;
 
-    const variancePct = d.budget!==0
-      ? (d.variance/Math.abs(d.budget))*100
-      : 0;
+    
+  const variance = d.actual - d.budget;
+
+  const variancePct = d.budget!==0
+     ? (variance/Math.abs(d.budget))*100
+     : 0;
+
 
     const el=document.getElementById(id);
 

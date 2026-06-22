@@ -1,5 +1,5 @@
 /**
- * routes/budget.js — QBO Budget vs Actual (DEBUG VERSION - FINAL)
+ * routes/budget.js — QBO Budget vs Actual (DEBUG VERSION - FINAL COS + REPARATIONS)
  */
 
 import { Router } from 'express';
@@ -98,7 +98,7 @@ function buildLine(actual, budget) {
 }
 
 
-// ── ✅ FINAL DEBUG FUNCTION (CORRECT COS CLASSIFICATION) ───────────────────
+// ── ✅ FINAL DEBUG FUNCTION ───────────────────────────────────────────────
 function extractBudgetTotalsDEBUG(budget) {
   let revenue = 0;
   let costOfSales = 0;
@@ -122,17 +122,20 @@ function extractBudgetTotalsDEBUG(budget) {
 
     if (fyMonth > currentFYMonth) continue;
 
-    // ✅ CORRECT COS LOGIC (distinguish inbound vs outbound)
+    // ✅ FINAL COS LOGIC (INCLUDING CUSTOMER REPARATIONS)
 
     if (
       /cost of sales/i.test(name) ||
 
-      // ✅ ONLY delivery OUT (exclude "stock into us")
+      // ✅ outbound delivery ONLY
       (/delivery/i.test(name) && /goods out/i.test(name)) ||
 
       /technical consultancy/i.test(name) ||
       /shrinkage/i.test(name) ||
-      /stock shrinkage/i.test(name)
+      /stock shrinkage/i.test(name) ||
+
+      // ✅ ADDED: customer reparations
+      /customer reparations/i.test(name)
     ) {
       costOfSales += amount;
 
@@ -146,7 +149,7 @@ function extractBudgetTotalsDEBUG(budget) {
 
       revenueLines.push({ account: name, date, amount });
 
-    // ✅ DISCOUNTS
+    // ✅ DISCOUNTS (reduce revenue)
     } else if (/discount/i.test(name)) {
       revenue += amount;
 

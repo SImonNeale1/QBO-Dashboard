@@ -530,7 +530,47 @@ function renderBvaYtd() {
 
   // ✅ ADD THESE (this is what was missing)
   const mgmtActual = d.actual + adj;
-  const variance = mgmtActual - d.budget;
+  let variance = mgmtActual - d.budget;
+
+   // ✅ DERIVED VARIANCE LOGIC
+
+   if (line.key === 'grossProfit') {
+     const revenue = bvaData.bva.revenue || {};
+     const cos = bvaData.bva.costOfSales || {};
+
+     const revAdj = showAdj ? getAdj('Revenue') : 0;
+     const cosAdj = showAdj ? getAdj('Cost of sales') : 0;
+
+     const revenueMgmt = (revenue.actual || 0) + revAdj;
+     const cosMgmt = (cos.actual || 0) + cosAdj;
+
+     const gpMgmt = revenueMgmt - cosMgmt;
+     const gpBudget = (revenue.budget || 0) - (cos.budget || 0);
+
+     variance = gpMgmt - gpBudget;
+   }
+
+   if (line.key === 'netIncome') {
+     const revenue = bvaData.bva.revenue || {};
+     const cos = bvaData.bva.costOfSales || {};
+     const expenses = bvaData.bva.expenses || {};
+
+     const revAdj = showAdj ? getAdj('Revenue') : 0;
+     const cosAdj = showAdj ? getAdj('Cost of sales') : 0;
+     const expAdj = showAdj ? getAdj('Overheads') : 0;
+
+     const revenueMgmt = (revenue.actual || 0) + revAdj;
+     const cosMgmt = (cos.actual || 0) + cosAdj;
+     const expMgmt = (expenses.actual || 0) + expAdj;
+
+     const gpMgmt = revenueMgmt - cosMgmt;
+     const netMgmt = gpMgmt - expMgmt;
+
+     const gpBudget = (revenue.budget || 0) - (cos.budget || 0);
+     const netBudget = gpBudget - (expenses.budget || 0);
+
+     variance = netMgmt - netBudget;
+   }
 
   const variancePct = d.budget !== 0
     ? (variance / Math.abs(d.budget)) * 100

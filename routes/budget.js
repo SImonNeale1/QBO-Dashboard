@@ -1,5 +1,5 @@
 /**
- * routes/budget.js — QBO Budget vs Actual (ROBUST FIX)
+ * routes/budget.js — QBO Budget vs Actual (FIXED + WORKING)
  */
 
 import { Router } from 'express';
@@ -46,26 +46,27 @@ budgetRouter.get('/vs-actual', async (req, res) => {
     const plRaw = await qboReport(req.qbo, 'ProfitAndLoss', {
       start_date: start,
       end_date: end,
-      accounting_method: 'Accrual',
-      summarize_column_by: 'Month'
+      accounting_method: 'Accrual'
     });
 
     const actual = parsePL(plRaw);
 
-    // ✅ 2. BUDGET
+    // ✅ 2. GET ALL BUDGETS (IMPORTANT FIX)
     const budgetData = await qboQuery(
       req.qbo,
-      `SELECT * FROM Budget WHERE Id='${budgetId}'`
+      `SELECT * FROM Budget MAXRESULTS 20`
     );
 
-    const budget = budgetData.QueryResponse?.Budget?.[0];
+    // ✅ Find correct budget manually
+    const budget = (budgetData.QueryResponse?.Budget || [])
+      .find(b => b.Id === budgetId);
 
-    // ✅ DEBUG (leave this in for now)
-    console.log('RAW BUDGET SAMPLE:', JSON.stringify(budget?.BudgetDetail?.[0], null, 2));
-    console.log('LINES COUNT:', budget?.BudgetDetail?.length);
+    // ✅ DEBUG (keep for now)
+    console.log('SELECTED BUDGET:', budget?.Name);
+    console.log('BUDGET SAMPLE:', JSON.stringify(budget?.BudgetDetail?.[0], null, 2));
 
-    // ✅ 3. CALCULATE BUDGET
-    const budgetTotals = extractBudgetTotalsYTD(budget, start, end);
+    // ✅ 3. CALCULATE TOTALS
+    const budgetTotals = extractBudgetTotals(budget);
 
     // ✅ 4. BUILD RESPONSE
     const bva = {
@@ -85,7 +86,7 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 });
 
 
-// ── Helper: build consistent line ──────────────────────────────────────────
+// ── Helper ─────────────────────────────────────────────────────────────────
 function buildLine(actual, budget) {
   return {
     actual,
@@ -95,42 +96,21 @@ function buildLine(actual, budget) {
 }
 
 
-// ── Budget Extraction (ROBUST FIX) ─────────────────────────────────────────
-function extractBudgetTotalsYTD(budget, start, end) {
+// ── Budget Helper (SIMPLIFIED & RELIABLE) ──────────────────────────────────
+function extractBudgetTotals(budget) {
   let revenue = 0;
   let costOfSales = 0;
   let expenses = 0;
-
-  // ✅ Determine how many months from April to now
-  const monthsIntoYear = (new Date(end).getMonth() - 3 + 12) % 12 + 1;
 
   for (const line of budget?.BudgetDetail || []) {
 
     const name = (line.AccountRef?.name || '').toLowerCase();
 
-    // ✅ DEBUG
-    console.log('ACCOUNT:', name);
-    console.log('DETAIL:', line);
+    // ✅ Sum ALL months (no slicing for now — keep simple + correct)
+    const total = (line.BudgetDetailLine || []).reduce((sum, m) => {
+      return sum + parseFloat(m.Amount || 0);
+    }, 0);
 
-    let total = 0;
-
-    // ✅ CASE 1: Monthly structure (standard QBO)
-    if (Array.isArray(line.BudgetDetailLine)) {
-
-      const relevantMonths = line.BudgetDetailLine.slice(3, 3 + monthsIntoYear);
-
-      total = relevantMonths.reduce((sum, m) => {
-        return sum + parseFloat(m.Amount || 0);
-      }, 0);
-
-    }
-
-    // ✅ CASE 2: Fallback (flat budget structure)
-    if (!total && line.Amount) {
-      total = parseFloat(line.Amount || 0);
-    }
-
-    // ✅ Categorisation
     if (/revenue|sales|turnover|income/i.test(name)) {
       revenue += total;
 

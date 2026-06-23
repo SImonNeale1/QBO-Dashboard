@@ -120,10 +120,11 @@ const invoices = (data.QueryResponse?.Invoice || [])
   }))
   .filter(inv => inv.balance > 0);
 
-const overdueInvoices = invoices.filter(i => i.daysOverdue > 0);
+const overdueInvoices = invoices.filter(i => i.daysOverdue > 0);const overdueInvoices = invoices.filter(i => i.daysOverdue > due);
 
-  res.json({
-    invoices,
+res.json({
+  invoices: overdueInvoices,
+
     totalOutstanding: invoices.reduce((s, i) => s + i.balance, 0),
     count: invoices.length,
     overdueCount: overdueInvoices.length,

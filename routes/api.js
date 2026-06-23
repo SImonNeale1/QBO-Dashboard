@@ -151,38 +151,23 @@ apiRouter.get('/customers/top', async (req, res) => {
       summarize_column_by: 'Total',
     });
 
+    const rows = [];
 
-const rows = [];
+    for (const section of raw.Rows?.Row || []) {
+      if (section.type === 'Section') {
+        for (const row of section.Rows?.Row || []) {
+          if (row.type === 'Data') {
+            const cols = row.ColData || [];
+            const name = cols[0]?.value;
+            const revenue = safeNum(cols[1]?.value);
 
-const allRows = raw?.Rows?.Row || [];
-
-for (const row of allRows) {
-  // Direct data rows (some QBO responses use this)
-  if (row.type === 'Data') {
-    const cols = row.ColData || [];
-    const name = cols[0]?.value;
-    const revenue = safeNum(cols[1]?.value);
-
-    if (name && revenue > 0) {
-      rows.push({ name, revenue });
-    }
-  }
-
-  // Section rows (nested format)
-  if (row.type === 'Section' && row.Rows?.Row) {
-    for (const sub of row.Rows.Row) {
-      if (sub.type === 'Data') {
-        const cols = sub.ColData || [];
-        const name = cols[0]?.value;
-        const revenue = safeNum(cols[1]?.value);
-
-        if (name && revenue > 0) {
-          rows.push({ name, revenue });
+            if (name && revenue > 0) {
+              rows.push({ name, revenue });
+            }
+          }
         }
       }
     }
-  }
-
 
     rows.sort((a, b) => b.revenue - a.revenue);
 
@@ -237,6 +222,7 @@ apiRouter.get('/expenses', async (req, res) => {
           }
         }
       }
+    }
 
     expenses.sort((a, b) => b.amount - a.amount);
 
@@ -290,4 +276,3 @@ function handleError(res, err) {
     details: err.response?.data || err.message
   });
 }
- 

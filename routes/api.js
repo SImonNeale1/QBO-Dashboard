@@ -146,6 +146,7 @@ apiRouter.get('/customers/top', async (req, res) => {
     if (!ensureQBO(req, res)) return;
 
     const raw = await qboReport(req.qbo, 'CustomerIncome', {
+      console.log('CUSTOMER RAW:', JSON.stringify(raw, null, 2));
       start_date: req.query.start || currentYearStart(),
       end_date:   req.query.end   || today(),
       summarize_column_by: 'Total',

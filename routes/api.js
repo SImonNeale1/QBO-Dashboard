@@ -237,7 +237,6 @@ apiRouter.get('/expenses', async (req, res) => {
           }
         }
       }
-    }
 
     expenses.sort((a, b) => b.amount - a.amount);
 

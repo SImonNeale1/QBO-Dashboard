@@ -122,14 +122,16 @@ const invoices = (data.QueryResponse?.Invoice || [])
 
 const overdueInvoices = invoices.filter(i => i.daysOverdue > 0);
 
+overdueInvoices.sort((a, b) => b.daysOverdue - a.daysOverdue);
+
 res.json({
   invoices: overdueInvoices,
+  totalOutstanding: invoices.reduce((s, i) => s + i.balance, 0),
+  count: invoices.length,
+  overdueCount: overdueInvoices.length,
+  overdueTotal: overdueInvoices.reduce((s, i) => s + i.balance, 0)
+});
 
-    totalOutstanding: invoices.reduce((s, i) => s + i.balance, 0),
-    count: invoices.length,
-    overdueCount: overdueInvoices.length,
-    overdueTotal: overdueInvoices.reduce((s, i) => s + i.balance, 0)
-  });
 
   } catch (err) {
     handleError(res, err);

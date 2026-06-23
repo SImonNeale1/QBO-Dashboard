@@ -290,3 +290,4 @@ function handleError(res, err) {
     details: err.response?.data || err.message
   });
 }
+ 

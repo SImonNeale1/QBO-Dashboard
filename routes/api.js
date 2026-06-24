@@ -180,7 +180,7 @@ apiRouter.get('/customers/top', async (req, res) => {
  * ✅ ✅ ✅ Revenue vs Expenses (FINAL FIX — DATE-BASED)
  */
 apiRouter.get('/expenses', async (req, res) => {
-  try {
+ return res.json({ test: "THIS IS THE NEW VERSION" });  try {
     if (!ensureQBO(req, res)) return;
 
     const raw = await qboReport(req.qbo, 'ProfitAndLoss', {

@@ -190,6 +190,11 @@ apiRouter.get('/expenses', async (req, res) => {
       summarize_column_by: 'Month'
     });
 
+// 👉 ADD THESE 3 LINES HERE
+console.log('HEADER:', raw.Header);
+console.log('COLUMNS:', raw.Columns);
+console.log('SAMPLE ROW:', JSON.stringify(raw.Rows?.Row?.[0], null, 2));
+    
     const allMonths = raw.Columns?.Column?.slice(1).map(c => c.ColTitle) || [];
 
     let revenue = [];

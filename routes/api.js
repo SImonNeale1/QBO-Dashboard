@@ -131,7 +131,6 @@ apiRouter.get('/customers/top', async (req, res) => {
 
     function extract(rowsInput = []) {
       for (const r of rowsInput) {
-
         if (r.type === 'Data' || (!r.type && r.ColData)) {
           const cols = r.ColData || [];
           const name = cols[0]?.value;
@@ -149,7 +148,6 @@ apiRouter.get('/customers/top', async (req, res) => {
     }
 
     extract(raw.Rows?.Row || []);
-
     rows.sort((a, b) => b.revenue - a.revenue);
 
     const topN = rows.slice(0, 10);
@@ -180,7 +178,7 @@ apiRouter.get('/customers/top', async (req, res) => {
 });
 
 /**
- * ✅ ✅ ✅ Revenue vs Expenses (FINAL CORRECT VERSION)
+ * ✅ ✅ ✅ Revenue vs Expenses (PERIOD FIX ONLY)
  */
 apiRouter.get('/expenses', async (req, res) => {
   try {
@@ -193,17 +191,15 @@ apiRouter.get('/expenses', async (req, res) => {
       summarize_column_by: 'Month'
     });
 
-    const months = raw.Columns?.Column?.slice(1).map(c => c.ColTitle) || [];
+    const allMonths = raw.Columns?.Column?.slice(1).map(c => c.ColTitle) || [];
 
-    let revenue = Array(months.length).fill(0);
-    let expenses = Array(months.length).fill(0);
+    let revenue = Array(allMonths.length).fill(0);
+    let expenses = Array(allMonths.length).fill(0);
 
     function findTotals(rows = []) {
       for (const r of rows) {
-
         const header = r.Header?.ColData?.[0]?.value || '';
 
-        // ✅ match ONLY TOTAL rows (reliable)
         if (/total income/i.test(header)) {
           revenue = (r.Summary?.ColData || []).slice(1).map(c => safeNum(c?.value));
         }
@@ -218,10 +214,17 @@ apiRouter.get('/expenses', async (req, res) => {
 
     findTotals(raw.Rows?.Row || []);
 
+    // ✅ ✅ CRITICAL FIX — slice from April only
+    const startIndex = allMonths.findIndex(m => m.startsWith('Apr'));
+
+    const months = startIndex >= 0 ? allMonths.slice(startIndex) : allMonths;
+    const revenueFiltered = startIndex >= 0 ? revenue.slice(startIndex) : revenue;
+    const expensesFiltered = startIndex >= 0 ? expenses.slice(startIndex) : expenses;
+
     res.json({
       months,
-      revenue,
-      expenses
+      revenue: revenueFiltered,
+      expenses: expensesFiltered
     });
 
   } catch (err) {

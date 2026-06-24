@@ -124,7 +124,7 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
 });
 
 /**
- * ✅ Top Customers (unchanged — already correct)
+ * ✅ Top Customers (FIXED % ISSUE)
  */
 apiRouter.get('/customers/top', async (req, res) => {
   try {
@@ -141,17 +141,7 @@ apiRouter.get('/customers/top', async (req, res) => {
     function extract(rowsInput = []) {
       for (const r of rowsInput) {
 
-        if (r.type === 'Data') {
-          const cols = r.ColData || [];
-          const name = cols[0]?.value;
-          const revenue = safeNum(cols[1]?.value);
-
-          if (name && revenue > 0) {
-            rows.push({ name, revenue });
-          }
-        }
-
-        if (!r.type && r.ColData) {
+        if (r.type === 'Data' || (!r.type && r.ColData)) {
           const cols = r.ColData || [];
           const name = cols[0]?.value;
           const revenue = safeNum(cols[1]?.value);
@@ -181,11 +171,18 @@ apiRouter.get('/customers/top', async (req, res) => {
     });
 
     const pl = parsePL(plRaw);
+    const plRevenue = pl.revenue;
+
+    const otherRevenue = plRevenue - topTotal;
 
     res.json({
-      customers: topN,
-      totalRevenue: pl.revenue,
-      otherRevenue: pl.revenue - topTotal
+      customers: topN.map(r => ({
+        ...r,
+        pct: plRevenue > 0 ? r.revenue / plRevenue : 0
+      })),
+      totalRevenue: plRevenue,
+      topTotal,
+      otherRevenue
     });
 
   } catch (err) {
@@ -194,7 +191,7 @@ apiRouter.get('/customers/top', async (req, res) => {
 });
 
 /**
- * ✅ Revenue vs Expenses (FIXED ONLY HERE)
+ * ✅ Revenue vs Expenses (CORRECT + RELIABLE)
  */
 apiRouter.get('/expenses', async (req, res) => {
   try {
@@ -204,45 +201,27 @@ apiRouter.get('/expenses', async (req, res) => {
       start_date: req.query.start || currentYearStart(),
       end_date: req.query.end || today(),
       accounting_method: 'Accrual',
-      summarize_column_by: 'Month' // ✅ CRITICAL FIX
+      summarize_column_by: 'Month'
     });
 
     const months = raw.Columns?.Column?.slice(1).map(c => c.ColTitle) || [];
 
-    const revenue = Array(months.length).fill(0);
-    const expenses = Array(months.length).fill(0);
+    let revenue = [];
+    let expenses = [];
 
-    function walk(rows = []) {
-      for (const row of rows) {
-        const header = row.Header?.ColData?.[0]?.value || '';
+    for (const section of raw.Rows?.Row || []) {
+      const header = section.Header?.ColData?.[0]?.value || '';
 
-        if (/income|revenue/i.test(header)) {
-          for (const r of row.Rows?.Row || []) {
-            if (r.type === 'Data') {
-              r.ColData.slice(1).forEach((c, i) => {
-                revenue[i] += safeNum(c.value);
-              });
-            }
-          }
-        }
+      if (/income/i.test(header)) {
+        const summary = section.Summary?.ColData || [];
+        revenue = summary.slice(1).map(c => safeNum(c?.value));
+      }
 
-        if (/expenses?/i.test(header)) {
-          for (const r of row.Rows?.Row || []) {
-            if (r.type === 'Data') {
-              r.ColData.slice(1).forEach((c, i) => {
-                expenses[i] += safeNum(c.value);
-              });
-            }
-          }
-        }
-
-        if (row.Rows?.Row) {
-          walk(row.Rows.Row);
-        }
+      if (/expenses?/i.test(header)) {
+        const summary = section.Summary?.ColData || [];
+        expenses = summary.slice(1).map(c => safeNum(c?.value));
       }
     }
-
-    walk(raw.Rows?.Row || []);
 
     res.json({
       months,
@@ -289,4 +268,3 @@ function handleError(res, err) {
     details: err.response?.data || err.message
   });
 }
-``

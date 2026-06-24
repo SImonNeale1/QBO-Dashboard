@@ -32,12 +32,7 @@ apiRouter.get('/pl', async (req, res) => {
     };
 
     const raw = await qboReport(req.qbo, 'ProfitAndLoss', params);
-
-    console.log('QBO RAW PL:', JSON.stringify(raw, null, 2));
-
     const parsed = parsePL(raw);
-
-    console.log('PARSED PL:', parsed);
 
     res.json(parsed);
 
@@ -87,7 +82,7 @@ apiRouter.get('/cash-flow', async (req, res) => {
 });
 
 /**
- * ✅ Outstanding Invoices (sorted by most overdue first)
+ * ✅ Outstanding Invoices
  */
 apiRouter.get('/invoices/outstanding', async (req, res) => {
   try {
@@ -129,26 +124,24 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
 });
 
 /**
- * ✅ Top Customers (fixed for your QBO structure)
+ * ✅ Top Customers (RECONCILED TO P&L)
  */
 apiRouter.get('/customers/top', async (req, res) => {
   try {
     if (!ensureQBO(req, res)) return;
 
+    // ✅ 1. Get Customer Income
     const raw = await qboReport(req.qbo, 'CustomerIncome', {
       start_date: req.query.start || currentYearStart(),
       end_date: req.query.end || today(),
       summarize_column_by: 'Total',
     });
 
-    console.log('CUSTOMER RAW:', JSON.stringify(raw, null, 2));
-
     const rows = [];
 
     function extract(rowsInput = []) {
       for (const r of rowsInput) {
 
-        // ✅ standard data rows
         if (r.type === 'Data') {
           const cols = r.ColData || [];
           const name = cols[0]?.value;
@@ -159,7 +152,6 @@ apiRouter.get('/customers/top', async (req, res) => {
           }
         }
 
-        // ✅ flat rows (no type) — THIS FIXES YOUR ISSUE
         if (!r.type && r.ColData) {
           const cols = r.ColData || [];
           const name = cols[0]?.value;
@@ -183,16 +175,29 @@ apiRouter.get('/customers/top', async (req, res) => {
     const limit = parseInt(req.query.limit || '10');
     const topN = rows.slice(0, limit);
 
-    const total = rows.reduce((s, r) => s + r.revenue, 0);
     const topTotal = topN.reduce((s, r) => s + r.revenue, 0);
+
+    // ✅ 2. Get P&L Revenue (FOR RECONCILIATION)
+    const plRaw = await qboReport(req.qbo, 'ProfitAndLoss', {
+      start_date: req.query.start || currentYearStart(),
+      end_date: req.query.end || today(),
+      accounting_method: 'Accrual',
+    });
+
+    const pl = parsePL(plRaw);
+    const plRevenue = pl.revenue;
+
+    // ✅ 3. Calculate "Other"
+    const otherRevenue = plRevenue - topTotal;
 
     res.json({
       customers: topN.map(r => ({
         ...r,
-        pct: total > 0 ? r.revenue / total : 0
+        pct: plRevenue > 0 ? r.revenue / plRevenue : 0
       })),
-      totalRevenue: total,
-      otherRevenue: total - topTotal,
+      totalRevenue: plRevenue,   // ✅ now tied to P&L
+      topTotal,
+      otherRevenue               // ✅ balancing figure
     });
 
   } catch (err) {
@@ -274,7 +279,6 @@ function safeNum(v) {
 
 function handleError(res, err) {
   console.error('API ERROR:', err.response?.data || err.message);
-
   res.status(err.status || 500).json({
     error: 'API failed',
     details: err.response?.data || err.message

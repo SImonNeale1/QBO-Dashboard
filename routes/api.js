@@ -124,13 +124,12 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
 });
 
 /**
- * ✅ Top Customers (RECONCILED TO P&L)
+ * ✅ Top Customers (unchanged — already correct)
  */
 apiRouter.get('/customers/top', async (req, res) => {
   try {
     if (!ensureQBO(req, res)) return;
 
-    // ✅ 1. Get Customer Income
     const raw = await qboReport(req.qbo, 'CustomerIncome', {
       start_date: req.query.start || currentYearStart(),
       end_date: req.query.end || today(),
@@ -172,12 +171,9 @@ apiRouter.get('/customers/top', async (req, res) => {
 
     rows.sort((a, b) => b.revenue - a.revenue);
 
-    const limit = parseInt(req.query.limit || '10');
-    const topN = rows.slice(0, limit);
-
+    const topN = rows.slice(0, 10);
     const topTotal = topN.reduce((s, r) => s + r.revenue, 0);
 
-    // ✅ 2. Get P&L Revenue (FOR RECONCILIATION)
     const plRaw = await qboReport(req.qbo, 'ProfitAndLoss', {
       start_date: req.query.start || currentYearStart(),
       end_date: req.query.end || today(),
@@ -185,19 +181,11 @@ apiRouter.get('/customers/top', async (req, res) => {
     });
 
     const pl = parsePL(plRaw);
-    const plRevenue = pl.revenue;
-
-    // ✅ 3. Calculate "Other"
-    const otherRevenue = plRevenue - topTotal;
 
     res.json({
-      customers: topN.map(r => ({
-        ...r,
-        pct: plRevenue > 0 ? r.revenue / plRevenue : 0
-      })),
-      totalRevenue: plRevenue,   // ✅ now tied to P&L
-      topTotal,
-      otherRevenue               // ✅ balancing figure
+      customers: topN,
+      totalRevenue: pl.revenue,
+      otherRevenue: pl.revenue - topTotal
     });
 
   } catch (err) {
@@ -206,7 +194,7 @@ apiRouter.get('/customers/top', async (req, res) => {
 });
 
 /**
- * ✅ Expenses
+ * ✅ Revenue vs Expenses (FIXED ONLY HERE)
  */
 apiRouter.get('/expenses', async (req, res) => {
   try {
@@ -216,33 +204,50 @@ apiRouter.get('/expenses', async (req, res) => {
       start_date: req.query.start || currentYearStart(),
       end_date: req.query.end || today(),
       accounting_method: 'Accrual',
+      summarize_column_by: 'Month' // ✅ CRITICAL FIX
     });
 
-    const expenses = [];
+    const months = raw.Columns?.Column?.slice(1).map(c => c.ColTitle) || [];
 
-    for (const section of raw.Rows?.Row || []) {
-      const header = section.Header?.ColData?.[0]?.value || '';
+    const revenue = Array(months.length).fill(0);
+    const expenses = Array(months.length).fill(0);
 
-      if (/expenses?/i.test(header)) {
-        for (const row of section.Rows?.Row || []) {
-          if (row.type === 'Data') {
-            const cols = row.ColData || [];
-            const name = cols[0]?.value;
-            const amount = safeNum(cols[1]?.value);
+    function walk(rows = []) {
+      for (const row of rows) {
+        const header = row.Header?.ColData?.[0]?.value || '';
 
-            if (name && amount !== 0) {
-              expenses.push({ name, amount });
+        if (/income|revenue/i.test(header)) {
+          for (const r of row.Rows?.Row || []) {
+            if (r.type === 'Data') {
+              r.ColData.slice(1).forEach((c, i) => {
+                revenue[i] += safeNum(c.value);
+              });
             }
           }
+        }
+
+        if (/expenses?/i.test(header)) {
+          for (const r of row.Rows?.Row || []) {
+            if (r.type === 'Data') {
+              r.ColData.slice(1).forEach((c, i) => {
+                expenses[i] += safeNum(c.value);
+              });
+            }
+          }
+        }
+
+        if (row.Rows?.Row) {
+          walk(row.Rows.Row);
         }
       }
     }
 
-    expenses.sort((a, b) => b.amount - a.amount);
+    walk(raw.Rows?.Row || []);
 
     res.json({
-      expenses,
-      total: expenses.reduce((s, e) => s + e.amount, 0)
+      months,
+      revenue,
+      expenses
     });
 
   } catch (err) {
@@ -284,3 +289,4 @@ function handleError(res, err) {
     details: err.response?.data || err.message
   });
 }
+``

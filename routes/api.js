@@ -19,7 +19,7 @@ function ensureQBO(req, res) {
 }
 
 /**
- * ✅ Profit & Loss (FIXED + SAFE)
+ * ✅ Profit & Loss
  */
 apiRouter.get('/pl', async (req, res) => {
   try {
@@ -27,23 +27,17 @@ apiRouter.get('/pl', async (req, res) => {
 
     const params = {
       start_date: req.query.start || currentYearStart(),
-      end_date:   req.query.end   || today(),
+      end_date: req.query.end || today(),
       accounting_method: 'Accrual',
     };
 
     const raw = await qboReport(req.qbo, 'ProfitAndLoss', params);
 
-    // ✅ DEBUG — ALWAYS LOG RAW + PARSED
     console.log('QBO RAW PL:', JSON.stringify(raw, null, 2));
 
     const parsed = parsePL(raw);
 
     console.log('PARSED PL:', parsed);
-
-    // ✅ SAFETY CHECK — prevents nonsense values like 136.73
-    if (!parsed || parsed.revenue < 1000) {
-      console.warn('⚠️ Suspicious revenue detected:', parsed?.revenue);
-    }
 
     res.json(parsed);
 
@@ -81,7 +75,7 @@ apiRouter.get('/cash-flow', async (req, res) => {
 
     const raw = await qboReport(req.qbo, 'CashFlow', {
       start_date: req.query.start || currentYearStart(),
-      end_date:   req.query.end   || today(),
+      end_date: req.query.end || today(),
     });
 
     const parsed = parseCashFlow(raw);
@@ -93,45 +87,42 @@ apiRouter.get('/cash-flow', async (req, res) => {
 });
 
 /**
- * ✅ Outstanding Invoices
+ * ✅ Outstanding Invoices (sorted by most overdue first)
  */
 apiRouter.get('/invoices/outstanding', async (req, res) => {
   try {
     if (!ensureQBO(req, res)) return;
 
-    const limit = 1000;
-
     const data = await qboQuery(
       req.qbo,
       `SELECT Id, DocNumber, CustomerRef, Balance, DueDate, TotalAmt
-       FROM Invoice
-       MAXRESULTS ${limit}`
+       FROM Invoice MAXRESULTS 1000`
     );
 
-const invoices = (data.QueryResponse?.Invoice || [])
-  .map(inv => ({
-    id:          inv.Id,
-    number:      inv.DocNumber,
-    customer:    inv.CustomerRef?.name,
-    balance:     parseFloat(inv.Balance),
-    total:       parseFloat(inv.TotalAmt),
-    dueDate:     inv.DueDate,
-    daysOverdue: daysOverdue(inv.DueDate),
-  }))
-  .filter(inv => inv.balance > 0);
+    const invoices = (data.QueryResponse?.Invoice || [])
+      .map(inv => ({
+        id: inv.Id,
+        number: inv.DocNumber,
+        customer: inv.CustomerRef?.name,
+        balance: parseFloat(inv.Balance),
+        total: parseFloat(inv.TotalAmt),
+        dueDate: inv.DueDate,
+        daysOverdue: daysOverdue(inv.DueDate),
+      }))
+      .filter(inv => inv.balance > 0);
 
-const overdueInvoices = invoices.filter(i => i.daysOverdue > 0);
+    const overdueInvoices = invoices.filter(i => i.daysOverdue > 0);
 
-overdueInvoices.sort((a, b) => b.daysOverdue - a.daysOverdue);
+    // ✅ SORT OLDEST FIRST
+    overdueInvoices.sort((a, b) => b.daysOverdue - a.daysOverdue);
 
-res.json({
-  invoices: overdueInvoices,
-  totalOutstanding: invoices.reduce((s, i) => s + i.balance, 0),
-  count: invoices.length,
-  overdueCount: overdueInvoices.length,
-  overdueTotal: overdueInvoices.reduce((s, i) => s + i.balance, 0)
-});
-
+    res.json({
+      invoices: overdueInvoices,
+      totalOutstanding: invoices.reduce((s, i) => s + i.balance, 0),
+      count: invoices.length,
+      overdueCount: overdueInvoices.length,
+      overdueTotal: overdueInvoices.reduce((s, i) => s + i.balance, 0)
+    });
 
   } catch (err) {
     handleError(res, err);
@@ -139,52 +130,46 @@ res.json({
 });
 
 /**
- * ✅ Top Customers
+ * ✅ Top Customers (YTD turnover descending)
  */
 apiRouter.get('/customers/top', async (req, res) => {
   try {
     if (!ensureQBO(req, res)) return;
 
     const raw = await qboReport(req.qbo, 'CustomerIncome', {
-      console.log('CUSTOMER RAW:', JSON.stringify(raw, null, 2));
       start_date: req.query.start || currentYearStart(),
-      end_date:   req.query.end   || today(),
+      end_date: req.query.end || today(),
       summarize_column_by: 'Total',
     });
 
+    // ✅ DEBUG (safe)
+    console.log('CUSTOMER RAW:', JSON.stringify(raw, null, 2));
+
     const rows = [];
 
-    
-for (const section of raw.Rows?.Row || []) {
+    // ✅ RECURSIVE PARSER (handles all QBO formats)
+    function extract(rowsInput = []) {
+      for (const r of rowsInput) {
 
-  // ✅ HANDLE DIRECT DATA ROWS (this is what you're currently missing)
-  if (section.type === 'Data') {
-    const cols = section.ColData || [];
-    const name = cols[0]?.value;
-    const revenue = safeNum(cols[1]?.value);
+        if (r.type === 'Data') {
+          const cols = r.ColData || [];
+          const name = cols[0]?.value;
+          const revenue = safeNum(cols[1]?.value);
 
-    if (name && revenue > 0) {
-      rows.push({ name, revenue });
-    }
-  }
+          if (name && revenue > 0) {
+            rows.push({ name, revenue });
+          }
+        }
 
-  // ✅ HANDLE NESTED SECTION DATA (your original logic preserved)
-  if (section.type === 'Section') {
-    for (const row of section.Rows?.Row || []) {
-      if (row.type === 'Data') {
-        const cols = row.ColData || [];
-        const name = cols[0]?.value;
-        const revenue = safeNum(cols[1]?.value);
-
-        if (name && revenue > 0) {
-          rows.push({ name, revenue });
+        if (r.Rows?.Row) {
+          extract(r.Rows.Row);
         }
       }
     }
-  }
-}
 
+    extract(raw.Rows?.Row || []);
 
+    // ✅ SORT DESCENDING (TOP FIRST)
     rows.sort((a, b) => b.revenue - a.revenue);
 
     const limit = parseInt(req.query.limit || '10');
@@ -208,7 +193,7 @@ for (const section of raw.Rows?.Row || []) {
 });
 
 /**
- * ✅ Expenses Breakdown
+ * ✅ Expenses
  */
 apiRouter.get('/expenses', async (req, res) => {
   try {
@@ -216,7 +201,7 @@ apiRouter.get('/expenses', async (req, res) => {
 
     const raw = await qboReport(req.qbo, 'ProfitAndLoss', {
       start_date: req.query.start || currentYearStart(),
-      end_date:   req.query.end   || today(),
+      end_date: req.query.end || today(),
       accounting_method: 'Accrual',
     });
 
@@ -228,8 +213,8 @@ apiRouter.get('/expenses', async (req, res) => {
       if (/expenses?/i.test(header)) {
         for (const row of section.Rows?.Row || []) {
           if (row.type === 'Data') {
-            const cols   = row.ColData || [];
-            const name   = cols[0]?.value;
+            const cols = row.ColData || [];
+            const name = cols[0]?.value;
             const amount = safeNum(cols[1]?.value);
 
             if (name && amount !== 0) {
@@ -259,16 +244,14 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
-
 function currentYearStart() {
   const now = new Date();
-  const year = now.getMonth() >= 3 
-    ? now.getFullYear() 
+  const year = now.getMonth() >= 3
+    ? now.getFullYear()
     : now.getFullYear() - 1;
 
   return `${year}-04-01`;
 }
-
 
 function daysOverdue(d) {
   if (!d) return 0;
@@ -281,9 +264,6 @@ function safeNum(v) {
   return isNaN(n) ? 0 : n;
 }
 
-/**
- * ✅ Error handling
- */
 function handleError(res, err) {
   console.error('API ERROR:', err.response?.data || err.message);
 

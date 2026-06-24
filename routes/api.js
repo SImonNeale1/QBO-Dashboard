@@ -4,9 +4,6 @@ import { parsePL, parseBalanceSheet, parseCashFlow } from '../lib/parsers.js';
 
 export const apiRouter = Router();
 
-/**
- * ✅ Ensure QuickBooks is connected before running any route
- */
 function ensureQBO(req, res) {
   if (!req.qbo) {
     res.status(401).json({
@@ -25,16 +22,13 @@ apiRouter.get('/pl', async (req, res) => {
   try {
     if (!ensureQBO(req, res)) return;
 
-    const params = {
+    const raw = await qboReport(req.qbo, 'ProfitAndLoss', {
       start_date: req.query.start || currentYearStart(),
       end_date: req.query.end || today(),
-      accounting_method: 'Accrual',
-    };
+      accounting_method: 'Accrual'
+    });
 
-    const raw = await qboReport(req.qbo, 'ProfitAndLoss', params);
-    const parsed = parsePL(raw);
-
-    res.json(parsed);
+    res.json(parsePL(raw));
 
   } catch (err) {
     handleError(res, err);
@@ -50,11 +44,10 @@ apiRouter.get('/balance-sheet', async (req, res) => {
 
     const raw = await qboReport(req.qbo, 'BalanceSheet', {
       date: req.query.date || today(),
-      accounting_method: 'Accrual',
+      accounting_method: 'Accrual'
     });
 
-    const parsed = parseBalanceSheet(raw);
-    res.json(parsed);
+    res.json(parseBalanceSheet(raw));
 
   } catch (err) {
     handleError(res, err);
@@ -70,11 +63,10 @@ apiRouter.get('/cash-flow', async (req, res) => {
 
     const raw = await qboReport(req.qbo, 'CashFlow', {
       start_date: req.query.start || currentYearStart(),
-      end_date: req.query.end || today(),
+      end_date: req.query.end || today()
     });
 
-    const parsed = parseCashFlow(raw);
-    res.json(parsed);
+    res.json(parseCashFlow(raw));
 
   } catch (err) {
     handleError(res, err);
@@ -107,7 +99,6 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
       .filter(inv => inv.balance > 0);
 
     const overdueInvoices = invoices.filter(i => i.daysOverdue > 0);
-
     overdueInvoices.sort((a, b) => b.daysOverdue - a.daysOverdue);
 
     res.json({
@@ -124,7 +115,7 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
 });
 
 /**
- * ✅ Top Customers (FIXED % ISSUE)
+ * ✅ Top Customers (unchanged working)
  */
 apiRouter.get('/customers/top', async (req, res) => {
   try {
@@ -167,13 +158,11 @@ apiRouter.get('/customers/top', async (req, res) => {
     const plRaw = await qboReport(req.qbo, 'ProfitAndLoss', {
       start_date: req.query.start || currentYearStart(),
       end_date: req.query.end || today(),
-      accounting_method: 'Accrual',
+      accounting_method: 'Accrual'
     });
 
     const pl = parsePL(plRaw);
     const plRevenue = pl.revenue;
-
-    const otherRevenue = plRevenue - topTotal;
 
     res.json({
       customers: topN.map(r => ({
@@ -182,7 +171,7 @@ apiRouter.get('/customers/top', async (req, res) => {
       })),
       totalRevenue: plRevenue,
       topTotal,
-      otherRevenue
+      otherRevenue: plRevenue - topTotal
     });
 
   } catch (err) {
@@ -191,7 +180,7 @@ apiRouter.get('/customers/top', async (req, res) => {
 });
 
 /**
- * ✅ Revenue vs Expenses (CORRECT + RELIABLE)
+ * ✅ ✅ ✅ Revenue vs Expenses (FINAL CORRECT VERSION)
  */
 apiRouter.get('/expenses', async (req, res) => {
   try {
@@ -206,22 +195,28 @@ apiRouter.get('/expenses', async (req, res) => {
 
     const months = raw.Columns?.Column?.slice(1).map(c => c.ColTitle) || [];
 
-    let revenue = [];
-    let expenses = [];
+    let revenue = Array(months.length).fill(0);
+    let expenses = Array(months.length).fill(0);
 
-    for (const section of raw.Rows?.Row || []) {
-      const header = section.Header?.ColData?.[0]?.value || '';
+    function findTotals(rows = []) {
+      for (const r of rows) {
 
-      if (/income/i.test(header)) {
-        const summary = section.Summary?.ColData || [];
-        revenue = summary.slice(1).map(c => safeNum(c?.value));
-      }
+        const header = r.Header?.ColData?.[0]?.value || '';
 
-      if (/expenses?/i.test(header)) {
-        const summary = section.Summary?.ColData || [];
-        expenses = summary.slice(1).map(c => safeNum(c?.value));
+        // ✅ match ONLY TOTAL rows (reliable)
+        if (/total income/i.test(header)) {
+          revenue = (r.Summary?.ColData || []).slice(1).map(c => safeNum(c?.value));
+        }
+
+        if (/total expenses/i.test(header)) {
+          expenses = (r.Summary?.ColData || []).slice(1).map(c => safeNum(c?.value));
+        }
+
+        if (r.Rows?.Row) findTotals(r.Rows.Row);
       }
     }
+
+    findTotals(raw.Rows?.Row || []);
 
     res.json({
       months,
@@ -243,10 +238,7 @@ function today() {
 
 function currentYearStart() {
   const now = new Date();
-  const year = now.getMonth() >= 3
-    ? now.getFullYear()
-    : now.getFullYear() - 1;
-
+  const year = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
   return `${year}-04-01`;
 }
 

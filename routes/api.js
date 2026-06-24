@@ -115,7 +115,7 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
 });
 
 /**
- * ✅ Top Customers (unchanged working)
+ * ✅ Top Customers
  */
 apiRouter.get('/customers/top', async (req, res) => {
   try {
@@ -141,9 +141,7 @@ apiRouter.get('/customers/top', async (req, res) => {
           }
         }
 
-        if (r.Rows?.Row) {
-          extract(r.Rows.Row);
-        }
+        if (r.Rows?.Row) extract(r.Rows.Row);
       }
     }
 
@@ -178,23 +176,23 @@ apiRouter.get('/customers/top', async (req, res) => {
 });
 
 /**
- * ✅ ✅ ✅ Revenue vs Expenses (PERIOD FIX ONLY)
+ * ✅ ✅ ✅ Revenue vs Expenses (FINAL PERIOD FIX)
  */
 apiRouter.get('/expenses', async (req, res) => {
   try {
     if (!ensureQBO(req, res)) return;
 
+    // ✅ ✅ THIS IS THE FIX
     const raw = await qboReport(req.qbo, 'ProfitAndLoss', {
-      start_date: req.query.start || currentYearStart(),
-      end_date: req.query.end || today(),
       accounting_method: 'Accrual',
-      summarize_column_by: 'Month'
+      summarize_column_by: 'Month',
+      report_period: 'This Fiscal Year-to-date'
     });
 
-    const allMonths = raw.Columns?.Column?.slice(1).map(c => c.ColTitle) || [];
+    const months = raw.Columns?.Column?.slice(1).map(c => c.ColTitle) || [];
 
-    let revenue = Array(allMonths.length).fill(0);
-    let expenses = Array(allMonths.length).fill(0);
+    let revenue = [];
+    let expenses = [];
 
     function findTotals(rows = []) {
       for (const r of rows) {
@@ -214,17 +212,10 @@ apiRouter.get('/expenses', async (req, res) => {
 
     findTotals(raw.Rows?.Row || []);
 
-    // ✅ ✅ CRITICAL FIX — slice from April only
-    const startIndex = allMonths.findIndex(m => m.startsWith('Apr'));
-
-    const months = startIndex >= 0 ? allMonths.slice(startIndex) : allMonths;
-    const revenueFiltered = startIndex >= 0 ? revenue.slice(startIndex) : revenue;
-    const expensesFiltered = startIndex >= 0 ? expenses.slice(startIndex) : expenses;
-
     res.json({
       months,
-      revenue: revenueFiltered,
-      expenses: expensesFiltered
+      revenue,
+      expenses
     });
 
   } catch (err) {

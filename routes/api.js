@@ -177,7 +177,7 @@ apiRouter.get('/customers/top', async (req, res) => {
 });
 
 /**
- * ✅ ✅ ✅ Revenue vs Expenses (FINAL WORKING FIX)
+ * ✅ ✅ ✅ Revenue vs Expenses (FINAL FIX — DATE-BASED)
  */
 apiRouter.get('/expenses', async (req, res) => {
   try {
@@ -186,50 +186,54 @@ apiRouter.get('/expenses', async (req, res) => {
     const raw = await qboReport(req.qbo, 'ProfitAndLoss', {
       start_date: req.query.start || currentYearStart(),
       end_date: req.query.end || today(),
-      accounting_method: 'Accrual',
-      summarize_column_by: 'Month'
+      accounting_method: 'Accrual'
     });
 
-// 👉 ADD THESE 3 LINES HERE
-console.log('HEADER:', raw.Header);
-console.log('COLUMNS:', raw.Columns);
-console.log('SAMPLE ROW:', JSON.stringify(raw.Rows?.Row?.[0], null, 2));
-    
-    const allMonths = raw.Columns?.Column?.slice(1).map(c => c.ColTitle) || [];
+    const monthMap = {};
 
-    let revenue = [];
-    let expenses = [];
-
-    function findTotals(rows = []) {
+    function walk(rows = []) {
       for (const r of rows) {
-        const header = r.Header?.ColData?.[0]?.value || '';
 
-        if (/total income/i.test(header)) {
-          revenue = (r.Summary?.ColData || []).slice(1).map(c => safeNum(c?.value));
+        if (r.type === 'Data') {
+          const dateValue = r.ColData?.[0]?.id || r.ColData?.[0]?.value;
+          const amount = safeNum(r.ColData?.[1]?.value);
+
+          if (dateValue) {
+            const d = new Date(dateValue);
+
+            if (!isNaN(d)) {
+              const key = `${d.getFullYear()}-${d.getMonth()}`;
+
+              if (!monthMap[key]) {
+                monthMap[key] = {
+                  month: d.toLocaleString('en-GB', { month: 'short' }),
+                  revenue: 0,
+                  expenses: 0,
+                  order: new Date(d.getFullYear(), d.getMonth(), 1)
+                };
+              }
+
+              if (amount >= 0) {
+                monthMap[key].revenue += amount;
+              } else {
+                monthMap[key].expenses += Math.abs(amount);
+              }
+            }
+          }
         }
 
-        if (/total expenses/i.test(header)) {
-          expenses = (r.Summary?.ColData || []).slice(1).map(c => safeNum(c?.value));
-        }
-
-        if (r.Rows?.Row) findTotals(r.Rows.Row);
+        if (r.Rows?.Row) walk(r.Rows.Row);
       }
     }
 
-    findTotals(raw.Rows?.Row || []);
+    walk(raw.Rows?.Row || []);
 
-    // ✅ ✅ ✅ PERIOD FIX (REAL ONE)
-    const start = new Date(raw.Header.StartPeriod);
-    const end = new Date(raw.Header.EndPeriod);
-
-    const monthsCount =
-      (end.getFullYear() - start.getFullYear()) * 12 +
-      (end.getMonth() - start.getMonth()) + 1;
+    const sorted = Object.values(monthMap).sort((a, b) => a.order - b.order);
 
     res.json({
-      months: allMonths.slice(-monthsCount),
-      revenue: revenue.slice(-monthsCount),
-      expenses: expenses.slice(-monthsCount)
+      months: sorted.map(x => x.month),
+      revenue: sorted.map(x => x.revenue),
+      expenses: sorted.map(x => x.expenses)
     });
 
   } catch (err) {

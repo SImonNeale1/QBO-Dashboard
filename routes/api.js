@@ -98,8 +98,9 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
       }))
       .filter(inv => inv.balance > 0);
 
-    const overdueInvoices = invoices.filter(i => i.daysOverdue > 0);
-    overdueInvoices.sort((a, b) => b.daysOverdue - a.daysOverdue);
+    const overdueInvoices = invoices
+      .filter(i => i.daysOverdue > 0)
+      .sort((a, b) => b.daysOverdue - a.daysOverdue);
 
     res.json({
       invoices: overdueInvoices,
@@ -176,20 +177,20 @@ apiRouter.get('/customers/top', async (req, res) => {
 });
 
 /**
- * ✅ ✅ ✅ Revenue vs Expenses (FINAL PERIOD FIX)
+ * ✅ ✅ ✅ Revenue vs Expenses (FINAL WORKING FIX)
  */
 apiRouter.get('/expenses', async (req, res) => {
   try {
     if (!ensureQBO(req, res)) return;
 
-    // ✅ ✅ THIS IS THE FIX
     const raw = await qboReport(req.qbo, 'ProfitAndLoss', {
+      start_date: req.query.start || currentYearStart(),
+      end_date: req.query.end || today(),
       accounting_method: 'Accrual',
-      summarize_column_by: 'Month',
-      report_period: 'This Fiscal Year-to-date'
+      summarize_column_by: 'Month'
     });
 
-    const months = raw.Columns?.Column?.slice(1).map(c => c.ColTitle) || [];
+    const allMonths = raw.Columns?.Column?.slice(1).map(c => c.ColTitle) || [];
 
     let revenue = [];
     let expenses = [];
@@ -212,10 +213,18 @@ apiRouter.get('/expenses', async (req, res) => {
 
     findTotals(raw.Rows?.Row || []);
 
+    // ✅ ✅ ✅ PERIOD FIX (REAL ONE)
+    const start = new Date(raw.Header.StartPeriod);
+    const end = new Date(raw.Header.EndPeriod);
+
+    const monthsCount =
+      (end.getFullYear() - start.getFullYear()) * 12 +
+      (end.getMonth() - start.getMonth()) + 1;
+
     res.json({
-      months,
-      revenue,
-      expenses
+      months: allMonths.slice(-monthsCount),
+      revenue: revenue.slice(-monthsCount),
+      expenses: expenses.slice(-monthsCount)
     });
 
   } catch (err) {

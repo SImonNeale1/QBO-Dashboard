@@ -113,7 +113,6 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
 
     const overdueInvoices = invoices.filter(i => i.daysOverdue > 0);
 
-    // ✅ SORT OLDEST FIRST
     overdueInvoices.sort((a, b) => b.daysOverdue - a.daysOverdue);
 
     res.json({
@@ -130,7 +129,7 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
 });
 
 /**
- * ✅ Top Customers (YTD turnover descending)
+ * ✅ Top Customers (fixed for your QBO structure)
  */
 apiRouter.get('/customers/top', async (req, res) => {
   try {
@@ -142,16 +141,26 @@ apiRouter.get('/customers/top', async (req, res) => {
       summarize_column_by: 'Total',
     });
 
-    // ✅ DEBUG (safe)
     console.log('CUSTOMER RAW:', JSON.stringify(raw, null, 2));
 
     const rows = [];
 
-    // ✅ RECURSIVE PARSER (handles all QBO formats)
     function extract(rowsInput = []) {
       for (const r of rowsInput) {
 
+        // ✅ standard data rows
         if (r.type === 'Data') {
+          const cols = r.ColData || [];
+          const name = cols[0]?.value;
+          const revenue = safeNum(cols[1]?.value);
+
+          if (name && revenue > 0) {
+            rows.push({ name, revenue });
+          }
+        }
+
+        // ✅ flat rows (no type) — THIS FIXES YOUR ISSUE
+        if (!r.type && r.ColData) {
           const cols = r.ColData || [];
           const name = cols[0]?.value;
           const revenue = safeNum(cols[1]?.value);
@@ -169,7 +178,6 @@ apiRouter.get('/customers/top', async (req, res) => {
 
     extract(raw.Rows?.Row || []);
 
-    // ✅ SORT DESCENDING (TOP FIRST)
     rows.sort((a, b) => b.revenue - a.revenue);
 
     const limit = parseInt(req.query.limit || '10');

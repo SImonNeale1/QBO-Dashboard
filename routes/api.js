@@ -42,6 +42,12 @@ apiRouter.get('/pl', async (req, res) => {
 
 /**
  * Balance Sheet
+ *
+ * Normal:
+ *   /api/balance-sheet
+ *
+ * Raw QuickBooks JSON:
+ *   /api/balance-sheet?raw=1
  */
 apiRouter.get('/balance-sheet', async (req, res) => {
   try {
@@ -52,7 +58,11 @@ apiRouter.get('/balance-sheet', async (req, res) => {
       accounting_method: 'Accrual'
     });
 
-    res.json(parseBalanceSheet(raw));
+    if (req.query.raw === '1') {
+      return res.json(raw);
+    }
+
+    return res.json(parseBalanceSheet(raw));
   } catch (err) {
     handleError(res, err);
   }

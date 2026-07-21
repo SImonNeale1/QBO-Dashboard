@@ -214,8 +214,8 @@ tr:last-child td { border-bottom:none; }
       <div id="bva-month-view" style="display:none">
         <div class="month-tabs" id="month-tabs"></div>
         <table class="bva-table">
-          <thead><tr><th style="width:28%">Line</th><th class="num actual">Actual</th><th class="num actual" id="month-adj-head">Adj</th><th class="num actual">Mgmt Actual</th><th class="num budget">Budget</th><th class="num var">Variance £</th><th class="num var">Variance %</th></tr></thead>
-          <tbody id="bva-month-body"><tr><td colspan="7" class="loading">Loading…</td></tr></tbody>
+          <thead><tr><th style="width:28%">Line</th><th class="num actual">Actual</th><th class="num budget">Budget</th><th class="num var">Variance £</th><th class="num var">Variance %</th></tr></thead>
+          <tbody id="bva-month-body"><tr><td colspan="5" class="loading">Loading…</td></tr></tbody>
         </table>
       </div>
       <div id="section-adj" style="margin-top:1.25rem;border-top:1px solid var(--border);padding-top:1rem">
@@ -387,7 +387,7 @@ function startDashboard() {
     document.getElementById('refresh-badge').textContent=mins===0?'Refreshed just now':`Refreshed ${mins}m ago`;
     if(secondsAgo%60===0){loadAll();secondsAgo=0;}
   },1000);
-  document.getElementById('mgmt-toggle').addEventListener('change',()=>{renderBvaYtd();renderBvaMonth();});
+  document.getElementById('mgmt-toggle').addEventListener('change',()=>renderBvaYtd());
 }
 async function loadAll() {
   document.getElementById('refresh-badge').textContent='Refreshing…';
@@ -409,35 +409,12 @@ async function loadPL() {
   if(bvaData)renderBvaYtd();
 }
 async function loadBS() {
-  const data = await apiFetch('/balance-sheet');
-  if (!data) return;
-
-  bsData = data;
-
-  document.getElementById('kpi-cash').textContent = fmt(data.cash);
-  document.getElementById('bs-date').textContent = data.asOf || 'Today';
-
-  const rows = [
-    ['Fixed Assets', data.fixedAssets],
-    ['Cash & Bank', data.cash],
-    ['Accounts Receivable', data.accountsReceivable],
-    ['Current Assets', data.currentAssets],
-    ['Total Assets', data.totalAssets, true],
-    ['Accounts Payable', data.accountsPayable],
-    ['Current Liabilities', data.currentLiabilities],
-    ['Long Term Liabilities', data.longTermLiabilities],
-    ['Total Liabilities', data.totalLiabilities, true],
-    ['Net Assets', data.netAssets, true]
-  ];
-
-  document.getElementById('bs-body').innerHTML = rows
-    .map(([label, value, bold]) => `
-      <tr>
-        <td${bold ? ' class="bold"' : ''}>${label}</td>
-        <td class="num${bold ? ' bold' : ''}">${fmt(value)}</td>
-      </tr>
-    `)
-    .join('');
+  const data=await apiFetch('/balance-sheet'); if(!data)return;
+  bsData=data;
+  document.getElementById('kpi-cash').textContent=fmt(data.cash);
+  document.getElementById('bs-date').textContent=data.asOf||'Today';
+  const rows=[['Current assets',data.currentAssets],['— Cash & bank',data.cash],['— Accounts receivable',data.accountsReceivable],['Fixed assets',data.fixedAssets],['Total assets',data.totalAssets,true],['Current liabilities',data.currentLiabilities],['Long-term liabilities',data.longTermLiabilities],['Net assets',data.netAssets,true]];
+  document.getElementById('bs-body').innerHTML=rows.map(([l,v,b])=>`<tr><td${b?' class="bold"':''}>${l}</td><td class="num${b?' bold':''}">${fmt(v)}</td></tr>`).join('');
 }
 async function loadInvoices() {
   const data=await apiFetch('/invoices/outstanding'); if(!data)return;
@@ -480,43 +457,8 @@ function setBvaView(view) {
   document.getElementById('bva-ytd-btn').classList.toggle('active',view==='ytd');
   document.getElementById('bva-month-btn').classList.toggle('active',view==='month');
 }
-function getBudgetMonths(){
-  if(!bvaData) return [];
-  return Array.isArray(bvaData.months)
-    ? bvaData.months
-    : Array.isArray(bvaData.monthly)
-      ? bvaData.monthly
-      : [];
-}
-function monthKey(month){
-  return String(month?.key || month?.month || month?.startDate || '').slice(0,7);
-}
-function formatBudgetMonth(key){
-  if(!/^\d{4}-\d{2}$/.test(key)) return key || 'Month';
-  const [year,month]=key.split('-').map(Number);
-  return new Date(year,month-1,1).toLocaleDateString('en-GB',{month:'short',year:'numeric'});
-}
-function buildMonthTabs(){
-  const months=getBudgetMonths();
-  const tabs=document.getElementById('month-tabs');
-  if(!months.length){
-    tabs.innerHTML='';
-    selectedMonth=null;
-    return;
-  }
-  if(selectedMonth===null || selectedMonth<0 || selectedMonth>=months.length){
-    selectedMonth=months.length-1;
-  }
-  tabs.innerHTML=months.map((month,i)=>{
-    const label=month.label || month.name || formatBudgetMonth(monthKey(month));
-    return `<button class="month-tab${i===selectedMonth?' active':''}" onclick="selectMonth(${i})">${label}</button>`;
-  }).join('');
-}
-function selectMonth(index){
-  selectedMonth=index;
-  buildMonthTabs();
-  renderBvaMonth();
-}
+function buildMonthTabs() {}
+function selectMonth() {}
 const BVA_LINES=[
   {key:'revenue',label:'Revenue',divider:false},
   {key:'costOfSales',label:'Cost of Sales',divider:false},
@@ -525,28 +467,7 @@ const BVA_LINES=[
   {key:'netIncome',label:'Net Profit',divider:true},
 ];
 function mgmtOn(){return document.getElementById('mgmt-toggle').checked;}
-function currentMonthKey(){
-  const now=new Date();
-  return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-}
-function isCurrentBudgetMonth(month){return monthKey(month)===currentMonthKey();}
-function getAdj(lineName,scope='ytd',month=null){
-  if(!mgmtOn() || !cfg.mgmt) return 0;
-  if(scope==='month' && (!month || !isCurrentBudgetMonth(month))) return 0;
-  return adjData.filter(a=>a.plLine===lineName).reduce((s,a)=>s+(parseFloat(a.amount)||0),0);
-}
-function adjustmentSet(scope='ytd',month=null){
-  const revenue=getAdj('Revenue',scope,month);
-  const costOfSales=getAdj('Cost of sales',scope,month);
-  const expenses=getAdj('Overheads',scope,month);
-  return {
-    revenue,
-    costOfSales,
-    expenses,
-    grossProfit:revenue-costOfSales,
-    netIncome:revenue-costOfSales-expenses
-  };
-}
+function getAdj(lineName){return adjData.filter(a=>a.plLine===lineName).reduce((s,a)=>s+(parseFloat(a.amount)||0),0);}
 function varCell(variance,variancePct,isExpense=false) {
   const isBad=isExpense?variance>0:variance<0;
   const color=!cfg.varColor?'':(isBad?'var(--red)':variance===0?'var(--muted)':'var(--green)');
@@ -556,125 +477,152 @@ function varCell(variance,variancePct,isExpense=false) {
   if(cfg.varPct)html+=`<td class="num" style="color:${color}">${variancePct>0?'+':''}${variancePct.toFixed(1)}%</td>`;
   return html;
 }
-function renderBvaYtd(){
+function renderBvaYtd() {
   if(!bvaData || !bvaData.bva) return;
-  const showAdj=mgmtOn()&&cfg.mgmt;
-  const adjustments=adjustmentSet('ytd');
-  const actualSource={
-    revenue:plData?.revenue ?? bvaData.bva.revenue?.actual ?? 0,
-    costOfSales:plData?.costOfSales ?? bvaData.bva.costOfSales?.actual ?? 0,
-    expenses:plData?.expenses ?? bvaData.bva.expenses?.actual ?? 0
-  };
-  actualSource.grossProfit=actualSource.revenue-actualSource.costOfSales;
-  actualSource.netIncome=actualSource.grossProfit-actualSource.expenses;
 
-  document.getElementById('bva-ytd-body').innerHTML=BVA_LINES.map(line=>{
-    const base=bvaData.bva[line.key]||{actual:0,budget:0};
-    const actual=Number(actualSource[line.key])||0;
-    const adj=showAdj?(Number(adjustments[line.key])||0):0;
-    const mgmtActual=actual+adj;
-    const budget=Number(base.budget)||0;
-    const variance=(showAdj?mgmtActual:actual)-budget;
-    const variancePct=budget!==0?(variance/Math.abs(budget))*100:0;
-    const isExpense=line.key==='costOfSales'||line.key==='expenses';
-    return `<tr${line.divider?' class="bva-divider bold"':''}>
-      <td>${line.label}</td>
-      <td class="num">${fmt(actual)}</td>
-      <td class="num">${showAdj?(adj?fmt(adj):'—'):'—'}</td>
-      <td class="num bold">${showAdj?fmt(mgmtActual):'—'}</td>
-      <td class="num" style="color:var(--muted)">${fmt(budget)}</td>
-      ${varCell(variance,variancePct,isExpense)}
-    </tr>`;
-  }).join('');
+  const showAdj = mgmtOn() && cfg.mgmt;
+
+  const plAdjMap={
+    revenue:'Revenue',
+    costOfSales:'Cost of sales',
+    grossProfit:'Gross profit',
+    expenses:'Overheads',
+    netIncome:'Net income'
+  };
+
+  document.getElementById('bva-ytd-body').innerHTML =
+    BVA_LINES.map(line=>{
+      
+  const base = bvaData.bva[line.key] || {actual:0,budget:0,variance:0};
+
+  const actualMap = {
+    revenue: plData?.revenue,
+    costOfSales: plData?.costOfSales,
+    grossProfit: plData?.grossProfit,
+    expenses: plData?.expenses,
+    netIncome: plData?.netIncome
+  };
+
+  const actual = actualMap[line.key] ?? base.actual;
+
+  const d = {
+    ...base,
+    actual
+  };
+
+   let adj = showAdj ? getAdj(plAdjMap[line.key]) : 0;
+
+   // ✅ DERIVED ADJUSTMENTS
+   if (line.key === 'grossProfit') {
+     const revAdj = getAdj('Revenue');
+     const cosAdj = getAdj('Cost of sales');
+     adj = revAdj - cosAdj;
+   }
+
+   if (line.key === 'netIncome') {
+     const revAdj = getAdj('Revenue');
+     const cosAdj = getAdj('Cost of sales');
+     const expAdj = getAdj('Overheads');
+
+     const gpAdj = revAdj - cosAdj;
+     adj = gpAdj - expAdj;
+   }
+
+  // ✅ ADD THESE (this is what was missing)
+  const mgmtActual = d.actual + adj;
+  let variance = mgmtActual - d.budget;
+
+   // ✅ DERIVED VARIANCE LOGIC
+
+   if (line.key === 'grossProfit') {
+     const revenue = bvaData.bva.revenue || {};
+     const cos = bvaData.bva.costOfSales || {};
+
+     const revAdj = showAdj ? getAdj('Revenue') : 0;
+     const cosAdj = showAdj ? getAdj('Cost of sales') : 0;
+
+     const revenueMgmt = (revenue.actual || 0) + revAdj;
+     const cosMgmt = (cos.actual || 0) + cosAdj;
+
+     const gpMgmt = revenueMgmt - cosMgmt;
+     const gpBudget = (revenue.budget || 0) - (cos.budget || 0);
+
+     variance = gpMgmt - gpBudget;
+   }
+
+   if (line.key === 'netIncome') {
+     const revenue = bvaData.bva.revenue || {};
+     const cos = bvaData.bva.costOfSales || {};
+     const expenses = bvaData.bva.expenses || {};
+
+     const revAdj = showAdj ? getAdj('Revenue') : 0;
+     const cosAdj = showAdj ? getAdj('Cost of sales') : 0;
+     const expAdj = showAdj ? getAdj('Overheads') : 0;
+
+     const revenueMgmt = (revenue.actual || 0) + revAdj;
+     const cosMgmt = (cos.actual || 0) + cosAdj;
+     const expMgmt = (expenses.actual || 0) + expAdj;
+
+     const gpMgmt = revenueMgmt - cosMgmt;
+     const netMgmt = gpMgmt - expMgmt;
+
+     const gpBudget = (revenue.budget || 0) - (cos.budget || 0);
+     const netBudget = gpBudget - (expenses.budget || 0);
+
+     variance = netMgmt - netBudget;
+   }
+
+  const variancePct = d.budget !== 0
+    ? (variance / Math.abs(d.budget)) * 100
+    : 0;
+
+  const isExpense = line.key==='costOfSales' || line.key==='expenses';
+
+      return `
+        <tr${line.divider?' class="bva-divider bold"':''}>
+          <td>${line.label}</td>
+          <td class="num">${fmt(d.actual)}</td>
+          <td class="num">${showAdj ? (adj ? fmt(adj) : '—') : '—'}</td>
+          <td class="num bold">${showAdj ? fmt(mgmtActual) : '—'}</td>
+          <td class="num" style="color:var(--muted)">${fmt(d.budget)}</td>
+          ${varCell(variance, variancePct, isExpense)}
+        </tr>`;
+    }).join('');
+
   updateKpiBudget();
 }
-function updateKpiBudget(){
-  if(!bvaData||!bvaData.bva)return;
-  [['kpi-rev-bud','revenue'],['kpi-gp-bud','grossProfit'],['kpi-net-bud','netIncome']].forEach(([id,key])=>{
+function updateKpiBudget() {
+  if(!bvaData || !bvaData.bva) return;
+
+  [['kpi-rev-bud','revenue'],
+   ['kpi-gp-bud','grossProfit'],
+   ['kpi-net-bud','netIncome']]
+  .forEach(([id,key])=>{
     const d=bvaData.bva[key];
-    if(!d)return;
-    const actual=Number(d.actual)||0;
-    const budget=Number(d.budget)||0;
-    const variance=actual-budget;
-    const variancePct=budget!==0?(variance/Math.abs(budget))*100:0;
+    if(!d) return;
+
+    
+  const variance = d.actual - d.budget;
+
+  const variancePct = d.budget!==0
+     ? (variance/Math.abs(d.budget))*100
+     : 0;
+
+
     const el=document.getElementById(id);
-    const isExpense=key==='costOfSales'||key==='expenses';
-    const isBad=isExpense?variance>0:variance<0;
-    const color=cfg.varColor?(isBad?'var(--red)':variance===0?'var(--muted)':'var(--green)'):'var(--muted)';
-    el.innerHTML=`<span style="color:${color}">Budget ${fmt(budget)} · ${variancePct.toFixed(1)}%</span>`;
+
+    const color=cfg.varColor
+      ? (d.variance<0?'var(--red)':'var(--green)')
+      : 'var(--muted)';
+
+    el.innerHTML=`<span style="color:${color}">
+      Budget ${fmt(d.budget)} · ${variancePct.toFixed(1)}%
+    </span>`;
+
     el.style.display='block';
   });
 }
-function renderBvaMonth(){
-  const body=document.getElementById('bva-month-body');
-  const adjHead=document.getElementById('month-adj-head');
-  const months=getBudgetMonths();
-
-  if(!months.length){
-    if(adjHead)adjHead.style.display='none';
-    body.innerHTML='<tr><td colspan="6" class="loading">No monthly data available</td></tr>';
-    return;
-  }
-
-  if(selectedMonth===null||selectedMonth<0||selectedMonth>=months.length){
-    selectedMonth=months.length-1;
-  }
-
-  const month=months[selectedMonth]||{};
-  const monthData=month.bva||month.lines||month.data||month;
-  const showManagement=mgmtOn()&&cfg.mgmt;
-  const showAdjustmentColumn=showManagement&&isCurrentBudgetMonth(month);
-
-  // Hide the adjustment heading completely for historical months.
-  if(adjHead)adjHead.style.display=showAdjustmentColumn?'':'none';
-
-  const adjustments=showAdjustmentColumn
-    ? adjustmentSet('month',month)
-    : {revenue:0,costOfSales:0,grossProfit:0,expenses:0,netIncome:0};
-
-  const revenueActual=Number(monthData.revenue?.actual)||0;
-  const cosActual=Number(monthData.costOfSales?.actual)||0;
-  const expensesActual=Number(monthData.expenses?.actual)||0;
-  const revenueBudget=Number(monthData.revenue?.budget)||0;
-  const cosBudget=Number(monthData.costOfSales?.budget)||0;
-  const expensesBudget=Number(monthData.expenses?.budget)||0;
-
-  const calculated={
-    revenue:{actual:revenueActual,budget:revenueBudget},
-    costOfSales:{actual:cosActual,budget:cosBudget},
-    grossProfit:{actual:revenueActual-cosActual,budget:revenueBudget-cosBudget},
-    expenses:{actual:expensesActual,budget:expensesBudget},
-    netIncome:{actual:revenueActual-cosActual-expensesActual,budget:revenueBudget-cosBudget-expensesBudget}
-  };
-
-  body.innerHTML=BVA_LINES.map(line=>{
-    const d=calculated[line.key];
-    const adj=showAdjustmentColumn?(Number(adjustments[line.key])||0):0;
-    const mgmtActual=d.actual+adj;
-    const comparisonActual=showManagement?mgmtActual:d.actual;
-    const variance=comparisonActual-d.budget;
-    const variancePct=d.budget!==0?(variance/Math.abs(d.budget))*100:0;
-    const isExpense=line.key==='costOfSales'||line.key==='expenses';
-
-    const adjustmentCell=showAdjustmentColumn
-      ? `<td class="num">${adj?fmt(adj):'—'}</td>`
-      : '';
-
-    return `<tr${line.divider?' class="bva-divider bold"':''}>
-      <td>${line.label}</td>
-      <td class="num">${fmt(d.actual)}</td>
-      ${adjustmentCell}
-      <td class="num bold">${showManagement?fmt(mgmtActual):'—'}</td>
-      <td class="num" style="color:var(--muted)">${fmt(d.budget)}</td>
-      ${varCell(variance,variancePct,isExpense)}
-    </tr>`;
-  }).join('');
-
-  const label=month.label||month.name||formatBudgetMonth(monthKey(month));
-  document.getElementById('pl-period').textContent=showAdjustmentColumn
-    ? `${label} · adjustments included`
-    : label;
-}
+function renderBvaMonth() {}
   
 // ── Chart ──────────────────────────────────────────────────────────────────
 function buildChart(custData) {
@@ -698,15 +646,15 @@ function renderAdj(){
   const tbody=document.getElementById('adj-body');
   if(!adjData.length){tbody.innerHTML=`<tr><td colspan="6" style="color:var(--muted);padding:1rem 8px;font-size:12px">No adjustments yet.</td></tr>`;return;}
   tbody.innerHTML=adjData.map((a,i)=>`<tr>
-    <td><input class="desc-input" value="${esc(a.desc)}" onchange="adjData[${i}].desc=this.value;renderBvaYtd();renderBvaMonth()"></td>
+    <td><input class="desc-input" value="${esc(a.desc)}" onchange="adjData[${i}].desc=this.value;renderBvaYtd()"></td>
     <td><select class="adj-select" onchange="adjData[${i}].type=this.value">${['Accrual','Prepayment','Deferred revenue','Depreciation','Other'].map(t=>`<option${a.type===t?' selected':''}>${t}</option>`).join('')}</select></td>
-    <td><select class="adj-select" onchange="adjData[${i}].plLine=this.value;renderBvaYtd();renderBvaMonth()">${['Revenue','Cost of sales','Overheads','Gross profit','Net income'].map(l=>`<option${a.plLine===l?' selected':''}>${l}</option>`).join('')}</select></td>
-    <td><input class="adj-input" type="number" value="${a.amount}" onchange="adjData[${i}].amount=Number(this.value);renderBvaYtd();renderBvaMonth()"></td>
+    <td><select class="adj-select" onchange="adjData[${i}].plLine=this.value;renderBvaYtd()">${['Revenue','Cost of sales','Overheads','Gross profit','Net income'].map(l=>`<option${a.plLine===l?' selected':''}>${l}</option>`).join('')}</select></td>
+    <td><input class="adj-input" type="number" value="${a.amount}" onchange="adjData[${i}].amount=Number(this.value);renderBvaYtd()"></td>
     <td><input class="desc-input" value="${esc(a.source)}" onchange="adjData[${i}].source=this.value" style="width:110px"></td>
-    <td><button class="del-btn" onclick="adjData.splice(${i},1);renderAdj();renderBvaYtd();renderBvaMonth()">×</button></td>
+    <td><button class="del-btn" onclick="adjData.splice(${i},1);renderAdj();renderBvaYtd()">×</button></td>
   </tr>`).join('');
 }
-function addAdj(){adjData.push({desc:'New adjustment',type:'Accrual',plLine:'Revenue',amount:0,source:'Manual'});renderAdj();renderBvaYtd();renderBvaMonth();}
+function addAdj(){adjData.push({desc:'New adjustment',type:'Accrual',plLine:'Revenue',amount:0,source:'Manual'});renderAdj();}
 function saveAdj(){
   try{localStorage.setItem('ceo_adj',JSON.stringify(adjData));}catch(e){}
   const btn=document.querySelector('.btn-green');const orig=btn.textContent;

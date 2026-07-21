@@ -419,15 +419,61 @@ async function loadBS() {
 async function loadInvoices() {
   const data=await apiFetch('/invoices/outstanding'); if(!data)return;
   invData=data;
-  document.getElementById('kpi-ar').textContent=fmt(data.totalOutstanding);
-  document.getElementById('kpi-ar-sub').textContent =
-    `${fmt(data.overdueTotal)} overdue • ${data.overdueCount} invoices`;
-  if(data.overdueCount>0)document.getElementById('inv-meta').textContent=`${data.overdueCount} overdue`;
-  const top=data.invoices.slice(0,8);
-  document.getElementById('inv-body').innerHTML=top.map(inv=>{
-    const pill=inv.daysOverdue>30?`<span class="pill pill-red">${inv.daysOverdue}d overdue</span>`:inv.daysOverdue>0?`<span class="pill pill-amber">${inv.daysOverdue}d overdue</span>`:`<span class="pill pill-green">Due ${inv.dueDate}</span>`;
-    return`<tr><td>${inv.customer||'Unknown'}</td><td class="num">${fmt(inv.balance)}</td><td>${pill}</td></tr>`;
-  }).join('')+(data.count>8?`<tr><td style="color:var(--muted)">+${data.count-8} more</td><td class="num">${fmt(data.invoices.slice(8).reduce((s,i)=>s+i.balance,0))}</td><td></td></tr>`:'');
+
+  const allInvoices=Array.isArray(data.invoices)?data.invoices:[];
+  const overdueInvoices=allInvoices
+    .filter(inv=>Number(inv.daysOverdue)>0)
+    .sort((a,b)=>Number(b.daysOverdue)-Number(a.daysOverdue));
+
+  const overdueTotal=overdueInvoices.reduce(
+    (sum,inv)=>sum+(Number(inv.balance)||0),
+    0
+  );
+
+  const visibleInvoices=overdueInvoices.slice(0,8);
+  const hiddenInvoices=overdueInvoices.slice(8);
+  const hiddenTotal=hiddenInvoices.reduce(
+    (sum,inv)=>sum+(Number(inv.balance)||0),
+    0
+  );
+
+  document.getElementById('kpi-ar').textContent=fmt(
+    bsData?.accountsReceivable ?? data.totalOutstanding
+  );
+
+  document.getElementById('kpi-ar-sub').textContent=
+    `${fmt(overdueTotal)} overdue • ${overdueInvoices.length} invoices`;
+
+  document.getElementById('inv-meta').textContent=
+    overdueInvoices.length>0?`${overdueInvoices.length} overdue`:'No overdue invoices';
+
+  const invoiceRows=visibleInvoices.map(inv=>{
+    const daysOverdue=Number(inv.daysOverdue)||0;
+    const pill=`<span class="pill ${daysOverdue>30?'pill-red':'pill-amber'}">${daysOverdue}d overdue</span>`;
+
+    return `<tr>
+      <td>${inv.customer||'Unknown'}</td>
+      <td class="num">${fmt(Number(inv.balance)||0)}</td>
+      <td>${pill}</td>
+    </tr>`;
+  }).join('');
+
+  const remainingRow=hiddenInvoices.length
+    ? `<tr>
+        <td style="color:var(--muted)">Remaining ${hiddenInvoices.length} overdue invoices</td>
+        <td class="num">${fmt(hiddenTotal)}</td>
+        <td></td>
+      </tr>`
+    : '';
+
+  const totalRow=`<tr class="bold">
+    <td>Total overdue</td>
+    <td class="num bold">${fmt(overdueTotal)}</td>
+    <td></td>
+  </tr>`;
+
+  document.getElementById('inv-body').innerHTML=
+    invoiceRows+remainingRow+totalRow;
 }
 async function loadCustomers() {
   const data=await apiFetch('/customers/top'); if(!data)return;

@@ -214,7 +214,7 @@ tr:last-child td { border-bottom:none; }
       <div id="bva-month-view" style="display:none">
         <div class="month-tabs" id="month-tabs"></div>
         <table class="bva-table">
-          <thead><tr><th style="width:28%">Line</th><th class="num actual">Actual</th><th class="num actual">Adj</th><th class="num actual">Mgmt Actual</th><th class="num budget">Budget</th><th class="num var">Variance £</th><th class="num var">Variance %</th></tr></thead>
+          <thead><tr><th style="width:28%">Line</th><th class="num actual">Actual</th><th class="num actual" id="month-adj-head">Adj</th><th class="num actual">Mgmt Actual</th><th class="num budget">Budget</th><th class="num var">Variance £</th><th class="num var">Variance %</th></tr></thead>
           <tbody id="bva-month-body"><tr><td colspan="7" class="loading">Loading…</td></tr></tbody>
         </table>
       </div>
@@ -584,19 +584,38 @@ function updateKpiBudget(){
 }
 function renderBvaMonth(){
   const body=document.getElementById('bva-month-body');
+  const adjHead=document.getElementById('month-adj-head');
   const months=getBudgetMonths();
-  if(!months.length){body.innerHTML='<tr><td colspan="7" class="loading">No monthly data available</td></tr>';return;}
-  if(selectedMonth===null||selectedMonth<0||selectedMonth>=months.length)selectedMonth=months.length-1;
+
+  if(!months.length){
+    if(adjHead)adjHead.style.display='none';
+    body.innerHTML='<tr><td colspan="6" class="loading">No monthly data available</td></tr>';
+    return;
+  }
+
+  if(selectedMonth===null||selectedMonth<0||selectedMonth>=months.length){
+    selectedMonth=months.length-1;
+  }
+
   const month=months[selectedMonth]||{};
   const monthData=month.bva||month.lines||month.data||month;
-  const showAdj=mgmtOn()&&cfg.mgmt;
-  const adjustments=adjustmentSet('month',month);
+  const showManagement=mgmtOn()&&cfg.mgmt;
+  const showAdjustmentColumn=showManagement&&isCurrentBudgetMonth(month);
+
+  // Hide the adjustment heading completely for historical months.
+  if(adjHead)adjHead.style.display=showAdjustmentColumn?'':'none';
+
+  const adjustments=showAdjustmentColumn
+    ? adjustmentSet('month',month)
+    : {revenue:0,costOfSales:0,grossProfit:0,expenses:0,netIncome:0};
+
   const revenueActual=Number(monthData.revenue?.actual)||0;
   const cosActual=Number(monthData.costOfSales?.actual)||0;
   const expensesActual=Number(monthData.expenses?.actual)||0;
   const revenueBudget=Number(monthData.revenue?.budget)||0;
   const cosBudget=Number(monthData.costOfSales?.budget)||0;
   const expensesBudget=Number(monthData.expenses?.budget)||0;
+
   const calculated={
     revenue:{actual:revenueActual,budget:revenueBudget},
     costOfSales:{actual:cosActual,budget:cosBudget},
@@ -604,24 +623,34 @@ function renderBvaMonth(){
     expenses:{actual:expensesActual,budget:expensesBudget},
     netIncome:{actual:revenueActual-cosActual-expensesActual,budget:revenueBudget-cosBudget-expensesBudget}
   };
+
   body.innerHTML=BVA_LINES.map(line=>{
     const d=calculated[line.key];
-    const adj=showAdj?(Number(adjustments[line.key])||0):0;
+    const adj=showAdjustmentColumn?(Number(adjustments[line.key])||0):0;
     const mgmtActual=d.actual+adj;
-    const variance=(showAdj?mgmtActual:d.actual)-d.budget;
+    const comparisonActual=showManagement?mgmtActual:d.actual;
+    const variance=comparisonActual-d.budget;
     const variancePct=d.budget!==0?(variance/Math.abs(d.budget))*100:0;
     const isExpense=line.key==='costOfSales'||line.key==='expenses';
+
+    const adjustmentCell=showAdjustmentColumn
+      ? `<td class="num">${adj?fmt(adj):'—'}</td>`
+      : '';
+
     return `<tr${line.divider?' class="bva-divider bold"':''}>
       <td>${line.label}</td>
       <td class="num">${fmt(d.actual)}</td>
-      <td class="num">${showAdj?(adj?fmt(adj):'—'):'—'}</td>
-      <td class="num bold">${showAdj?fmt(mgmtActual):'—'}</td>
+      ${adjustmentCell}
+      <td class="num bold">${showManagement?fmt(mgmtActual):'—'}</td>
       <td class="num" style="color:var(--muted)">${fmt(d.budget)}</td>
       ${varCell(variance,variancePct,isExpense)}
     </tr>`;
   }).join('');
+
   const label=month.label||month.name||formatBudgetMonth(monthKey(month));
-  document.getElementById('pl-period').textContent=isCurrentBudgetMonth(month)&&showAdj?`${label} · adjustments included`:label;
+  document.getElementById('pl-period').textContent=showAdjustmentColumn
+    ? `${label} · adjustments included`
+    : label;
 }
   
 // ── Chart ──────────────────────────────────────────────────────────────────

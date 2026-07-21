@@ -1,11 +1,6 @@
 /**
  * routes/budget.js
- * QBO Budget vs Actual
- *
- * Returns:
- * - YTD Budget vs Actual
- * - Monthly Budget vs Actual
- *
+ * QBO Budget vs Actual — YTD and monthly
  * Financial year: 1 April to 31 March
  */
 
@@ -15,7 +10,7 @@ import { parsePL } from '../lib/parsers.js';
 
 export const budgetRouter = Router();
 
-const FY_START_MONTH = 3; // April, zero-indexed
+const FY_START_MONTH = 3; // April, zero indexed
 
 // ── List budgets ───────────────────────────────────────────────────────────
 budgetRouter.get('/list', async (req, res) => {
@@ -23,6 +18,12 @@ budgetRouter.get('/list', async (req, res) => {
     const data = await qboQuery(
       req.qbo,
       'SELECT * FROM Budget MAXRESULTS 20'
+    );
+
+    const now = new Date();
+    const currentFinancialYearStart = getFinancialYearStart(now);
+    const currentFinancialYearLabel = formatFinancialYearLabel(
+      currentFinancialYearStart
     );
 
     const budgets = (data.QueryResponse?.Budget || [])
@@ -36,7 +37,18 @@ budgetRouter.get('/list', async (req, res) => {
         name: budget.Name,
         year: getBudgetYearLabel(budget),
         type: budget.BudgetType
-      }));
+      }))
+      .sort((a, b) => {
+        const aCurrent =
+          a.year === currentFinancialYearLabel ||
+          String(a.name || '').includes(currentFinancialYearLabel);
+
+        const bCurrent =
+          b.year === currentFinancialYearLabel ||
+          String(b.name || '').includes(currentFinancialYearLabel);
+
+        return Number(bCurrent) - Number(aCurrent);
+      });
 
     res.json({ budgets });
   } catch (err) {
@@ -48,19 +60,18 @@ budgetRouter.get('/list', async (req, res) => {
 budgetRouter.get('/vs-actual', async (req, res) => {
   try {
     const requestedBudgetId = String(req.query.budgetId || '');
-
     const now = new Date();
     const financialYearStart = getFinancialYearStart(now);
-    const ytdEnd = toIsoDate(now);
+    const ytdEnd = now;
 
     const budgetQueryResult = await qboQuery(
       req.qbo,
       'SELECT * FROM Budget MAXRESULTS 20'
     );
 
-    const allBudgets = budgetQueryResult.QueryResponse?.Budget || [];
-
-    const validBudgets = allBudgets.filter(
+    const validBudgets = (
+      budgetQueryResult.QueryResponse?.Budget || []
+    ).filter(
       budget =>
         Array.isArray(budget.BudgetDetail) &&
         budget.BudgetDetail.length > 0
@@ -80,9 +91,7 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 
     if (!budget) {
       return res.status(404).json({
-        error: requestedBudgetId
-          ? `Budget ${requestedBudgetId} was not found`
-          : 'No suitable budget was found'
+        error: 'No suitable budget was found for the current financial year'
       });
     }
 
@@ -91,39 +100,27 @@ budgetRouter.get('/vs-actual', async (req, res) => {
       name: budget.Name
     });
 
-    // Get YTD actual P&L.
-    const ytdActualRaw = await qboReport(
-      req.qbo,
-      'ProfitAndLoss',
-      {
-        start_date: toIsoDate(financialYearStart),
-        end_date: ytdEnd,
-        accounting_method: 'Accrual'
-      }
-    );
+    const ytdActualRaw = await qboReport(req.qbo, 'ProfitAndLoss', {
+      start_date: toIsoDate(financialYearStart),
+      end_date: toIsoDate(ytdEnd),
+      accounting_method: 'Accrual'
+    });
 
     const ytdActual = normaliseActualPL(parsePL(ytdActualRaw));
 
-    // Get YTD budget totals.
     const ytdBudget = extractBudgetTotals(
       budget,
       financialYearStart,
-      now
+      ytdEnd
     );
 
     const bva = buildBva(ytdActual, ytdBudget);
-
-    // Build each completed/current financial-year month.
-    const monthRanges = buildFinancialYearMonthRanges(
-      financialYearStart,
-      now
-    );
-
     const months = [];
 
-    // Process sequentially to avoid sending too many simultaneous requests
-    // to QuickBooks.
-    for (const range of monthRanges) {
+    for (const range of buildFinancialYearMonthRanges(
+      financialYearStart,
+      now
+    )) {
       const monthActualRaw = await qboReport(
         req.qbo,
         'ProfitAndLoss',
@@ -134,7 +131,9 @@ budgetRouter.get('/vs-actual', async (req, res) => {
         }
       );
 
-      const monthActual = normaliseActualPL(parsePL(monthActualRaw));
+      const monthActual = normaliseActualPL(
+        parsePL(monthActualRaw)
+      );
 
       const monthBudget = extractBudgetTotals(
         budget,
@@ -155,7 +154,7 @@ budgetRouter.get('/vs-actual', async (req, res) => {
       year: financialYearStart.getFullYear(),
       financialYear: formatFinancialYearLabel(financialYearStart),
       startDate: toIsoDate(financialYearStart),
-      endDate: ytdEnd,
+      endDate: toIsoDate(ytdEnd),
       budget: {
         id: budget.Id,
         name: budget.Name,
@@ -216,24 +215,19 @@ function normaliseActualPL(pl = {}) {
   const costOfSales = safeNumber(pl.costOfSales);
   const expenses = safeNumber(pl.expenses);
 
-  /*
-   * Prefer values provided by parsePL, but derive them when absent.
-   * This keeps the calculations consistent with the existing dashboard.
-   */
-  const grossProfit = hasNumericValue(pl.grossProfit)
-    ? safeNumber(pl.grossProfit)
-    : revenue - costOfSales;
-
-  const netIncome = hasNumericValue(pl.netIncome)
-    ? safeNumber(pl.netIncome)
-    : grossProfit - expenses;
-
   return {
     revenue,
     costOfSales,
-    grossProfit,
+
+    grossProfit: hasNumericValue(pl.grossProfit)
+      ? safeNumber(pl.grossProfit)
+      : revenue - costOfSales,
+
     expenses,
-    netIncome
+
+    netIncome: hasNumericValue(pl.netIncome)
+      ? safeNumber(pl.netIncome)
+      : revenue - costOfSales - expenses
   };
 }
 
@@ -243,21 +237,13 @@ function extractBudgetTotals(budget, periodStart, periodEnd) {
   let costOfSales = 0;
   let expenses = 0;
 
-  const revenueLines = [];
-  const costOfSalesLines = [];
-  const expenseLines = [];
-
   const start = startOfDay(periodStart);
   const end = endOfDay(periodEnd);
 
   for (const line of budget?.BudgetDetail || []) {
     const budgetDate = parseBudgetDate(line.BudgetDate);
 
-    if (!budgetDate) {
-      continue;
-    }
-
-    if (budgetDate < start || budgetDate > end) {
+    if (!budgetDate || budgetDate < start || budgetDate > end) {
       continue;
     }
 
@@ -270,83 +256,36 @@ function extractBudgetTotals(budget, periodStart, periodEnd) {
 
     if (category === 'costOfSales') {
       costOfSales += amount;
-
-      costOfSalesLines.push({
-        account: accountName,
-        date: line.BudgetDate,
-        amount
-      });
-
-      continue;
-    }
-
-    if (category === 'revenue') {
+    } else if (category === 'revenue') {
       revenue += amount;
-
-      revenueLines.push({
-        account: accountName,
-        date: line.BudgetDate,
-        amount
-      });
-
-      continue;
-    }
-
-    if (category === 'discount') {
-      /*
-       * QuickBooks may store discounts as negative budget values.
-       * Adding the signed amount reduces revenue correctly.
-       */
+    } else if (category === 'discount') {
       revenue += amount;
-
-      revenueLines.push({
-        account: accountName,
-        date: line.BudgetDate,
-        amount
-      });
-
-      continue;
+    } else {
+      expenses += amount;
     }
-
-    expenses += amount;
-
-    expenseLines.push({
-      account: accountName,
-      date: line.BudgetDate,
-      amount
-    });
   }
 
-  console.log('BUDGET PERIOD:', {
-    budget: budget?.Name,
-    start: toIsoDate(periodStart),
-    end: toIsoDate(periodEnd),
-    totals: {
-      revenue,
-      costOfSales,
-      expenses,
-      grossProfit: revenue - costOfSales,
-      netIncome: revenue - costOfSales - expenses
-    }
-  });
-
-  console.log('REVENUE BREAKDOWN:', revenueLines);
-  console.log('COS BREAKDOWN:', costOfSalesLines);
-  console.log('EXPENSE BREAKDOWN:', expenseLines);
-
-  return {
+  const totals = {
     revenue,
     costOfSales,
     expenses,
     grossProfit: revenue - costOfSales,
     netIncome: revenue - costOfSales - expenses
   };
+
+  console.log('BUDGET PERIOD:', {
+    budget: budget?.Name,
+    start: toIsoDate(periodStart),
+    end: toIsoDate(periodEnd),
+    totals
+  });
+
+  return totals;
 }
 
 function classifyBudgetAccount(accountName) {
   const name = String(accountName || '').toLowerCase();
 
-  // Cost of sales, including customer reparations.
   if (
     /cost of sales/i.test(name) ||
     (/delivery/i.test(name) && /goods out/i.test(name)) ||
@@ -358,14 +297,12 @@ function classifyBudgetAccount(accountName) {
     return 'costOfSales';
   }
 
-  // Revenue.
   if (
     /sales of product income|shipping income|cgl sales/i.test(name)
   ) {
     return 'revenue';
   }
 
-  // Discounts reduce revenue.
   if (/discount/i.test(name)) {
     return 'discount';
   }
@@ -379,21 +316,51 @@ function selectBudget({
   requestedBudgetId,
   financialYearStart
 }) {
+  const financialYearEnd = new Date(
+    financialYearStart.getFullYear() + 1,
+    FY_START_MONTH,
+    0
+  );
+
+  const overlapsFinancialYear = budget =>
+    (budget.BudgetDetail || []).some(line => {
+      const date = parseBudgetDate(line.BudgetDate);
+
+      return (
+        date &&
+        date >= startOfDay(financialYearStart) &&
+        date <= endOfDay(financialYearEnd)
+      );
+    });
+
   if (requestedBudgetId) {
-    return budgets.find(
+    const requestedBudget = budgets.find(
       budget => String(budget.Id) === requestedBudgetId
     );
+
+    if (
+      requestedBudget &&
+      overlapsFinancialYear(requestedBudget)
+    ) {
+      return requestedBudget;
+    }
   }
 
   const yearLabel = formatFinancialYearLabel(
     financialYearStart
   );
 
-  const matchingBudget = budgets.find(budget =>
-    String(budget.Name || '').includes(yearLabel)
+  const nameMatch = budgets.find(
+    budget =>
+      String(budget.Name || '').includes(yearLabel) &&
+      overlapsFinancialYear(budget)
   );
 
-  return matchingBudget || budgets[0];
+  if (nameMatch) {
+    return nameMatch;
+  }
+
+  return budgets.find(overlapsFinancialYear) || null;
 }
 
 function getBudgetYearLabel(budget) {
@@ -406,11 +373,9 @@ function getBudgetYearLabel(budget) {
     return '';
   }
 
-  const financialYearStart = getFinancialYearStart(
-    budgetDates[0]
+  return formatFinancialYearLabel(
+    getFinancialYearStart(budgetDates[0])
   );
-
-  return formatFinancialYearLabel(financialYearStart);
 }
 
 // ── Date helpers ───────────────────────────────────────────────────────────
@@ -501,16 +466,14 @@ function parseBudgetDate(value) {
 
 function formatFinancialYearLabel(financialYearStart) {
   const startYear = financialYearStart.getFullYear();
-  const endYear = String(startYear + 1).slice(-2);
 
-  return `${startYear}-${endYear}`;
+  return `${startYear}-${String(startYear + 1).slice(-2)}`;
 }
 
 function formatMonthKey(date) {
-  return [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, '0')
-  ].join('-');
+  return `${date.getFullYear()}-${String(
+    date.getMonth() + 1
+  ).padStart(2, '0')}`;
 }
 
 function formatMonthLabel(date) {
@@ -560,14 +523,17 @@ function safeNumber(value) {
 }
 
 function hasNumericValue(value) {
-  if (value === null || value === undefined || value === '') {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ''
+  ) {
     return false;
   }
 
   return Number.isFinite(Number.parseFloat(value));
 }
 
-// ── Error handler ──────────────────────────────────────────────────────────
 function handleError(res, err) {
   console.error(err);
 

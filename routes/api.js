@@ -128,7 +128,7 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
 });
 
 /**
- * Top Customers YTD
+ * Top Customers YTD — Total Sales Revenue
  */
 apiRouter.get('/customers/top', async (req, res) => {
   try {
@@ -140,9 +140,13 @@ apiRouter.get('/customers/top', async (req, res) => {
     const endDate =
       req.query.end || today();
 
+    /*
+     * CustomerSales returns sales revenue by customer,
+     * rather than profit/net income after customer costs.
+     */
     const raw = await qboReport(
       req.qbo,
-      'CustomerIncome',
+      'CustomerSales',
       {
         start_date: startDate,
         end_date: endDate,
@@ -213,11 +217,11 @@ apiRouter.get('/customers/top', async (req, res) => {
     function walkReportRows(rows = []) {
       for (const row of rows) {
         /*
-         * QuickBooks CustomerIncome reports often return
-         * each customer as a grouped section:
+         * QuickBooks may return each customer as a grouped
+         * section where:
          *
-         * Header = customer name
-         * Summary = customer total
+         * Header  = customer name
+         * Summary = total customer sales
          */
         const groupedCustomerName =
           getCustomerNameFromHeader(row);
@@ -235,8 +239,8 @@ apiRouter.get('/customers/top', async (req, res) => {
           );
 
           /*
-           * Do not also read the child rows because the
-           * summary already contains the full customer total.
+           * The summary already contains the customer's total.
+           * Do not also include its child rows.
            */
           continue;
         }
@@ -304,6 +308,7 @@ apiRouter.get('/customers/top', async (req, res) => {
     );
 
     const pl = parsePL(plRaw);
+
     const totalRevenue =
       safeNum(pl.revenue);
 
@@ -319,7 +324,12 @@ apiRouter.get('/customers/top', async (req, res) => {
 
       totalRevenue,
       topTotal,
-      otherRevenue: totalRevenue - topTotal,
+
+      otherRevenue: Math.max(
+        0,
+        totalRevenue - topTotal
+      ),
+
       startDate,
       endDate
     });
@@ -416,7 +426,9 @@ apiRouter.get('/expenses', async (req, res) => {
       );
 
     res.json({
-      months: sorted.map(item => item.month),
+      months: sorted.map(
+        item => item.month
+      ),
 
       revenue: sorted.map(
         item => item.revenue
@@ -440,12 +452,8 @@ function today() {
     .slice(0, 10);
 }
 
-/*
+/**
  * Financial year starts on 1 April.
- *
- * For example:
- * January 2027 returns 2026-04-01.
- * July 2026 returns 2026-04-01.
  */
 function currentYearStart() {
   const now = new Date();
@@ -557,6 +565,8 @@ function isReportTotalRow(name) {
     normalised === 'grand total' ||
     normalised === 'net income' ||
     normalised === 'gross profit' ||
+    normalised === 'income' ||
+    normalised === 'sales' ||
     normalised.startsWith('total ')
   );
 }

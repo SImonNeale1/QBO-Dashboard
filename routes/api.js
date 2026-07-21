@@ -91,31 +91,34 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
     );
 
     const invoices = (data.QueryResponse?.Invoice || [])
-      .map(inv => ({
-        id: inv.Id,
-        number: inv.DocNumber,
-        customer: inv.CustomerRef?.name || 'Unknown',
-        balance: safeNum(inv.Balance),
-        total: safeNum(inv.TotalAmt),
-        dueDate: inv.DueDate,
-        daysOverdue: daysOverdue(inv.DueDate)
+      .map(invoice => ({
+        id: invoice.Id,
+        number: invoice.DocNumber,
+        customer: invoice.CustomerRef?.name || 'Unknown',
+        balance: safeNum(invoice.Balance),
+        total: safeNum(invoice.TotalAmt),
+        dueDate: invoice.DueDate,
+        daysOverdue: daysOverdue(invoice.DueDate)
       }))
-      .filter(inv => inv.balance > 0);
+      .filter(invoice => invoice.balance > 0);
 
     const overdueInvoices = invoices
-      .filter(inv => inv.daysOverdue > 0)
+      .filter(invoice => invoice.daysOverdue > 0)
       .sort((a, b) => b.daysOverdue - a.daysOverdue);
 
     res.json({
       invoices: overdueInvoices,
+
       totalOutstanding: invoices.reduce(
-        (sum, inv) => sum + inv.balance,
+        (sum, invoice) => sum + invoice.balance,
         0
       ),
+
       count: invoices.length,
       overdueCount: overdueInvoices.length,
+
       overdueTotal: overdueInvoices.reduce(
-        (sum, inv) => sum + inv.balance,
+        (sum, invoice) => sum + invoice.balance,
         0
       )
     });
@@ -148,20 +151,103 @@ apiRouter.get('/customers/top', async (req, res) => {
       }
     );
 
-    /*
-     * QuickBooks reports can return more than two columns.
-     * The customer total is therefore taken from the final
-     * valid numeric column rather than always using column 2.
-     *
-     * Duplicate customer rows are combined before ranking.
-     */
     const customerTotals = new Map();
 
-    function extractCustomerRows(rows = []) {
+    function addCustomer(name, revenue) {
+      const cleanName = String(name || '').trim();
+      const amount = safeNum(revenue);
+
+      if (!cleanName) return;
+      if (amount <= 0) return;
+      if (isReportTotalRow(cleanName)) return;
+
+      const existing =
+        customerTotals.get(cleanName) || 0;
+
+      customerTotals.set(
+        cleanName,
+        existing + amount
+      );
+    }
+
+    function getCustomerNameFromHeader(row) {
+      const headerColumns =
+        row.Header?.ColData || [];
+
+      for (const column of headerColumns) {
+        const value =
+          String(column?.value || '').trim();
+
+        if (
+          value &&
+          !isNumericValue(value) &&
+          !isReportTotalRow(value)
+        ) {
+          return value;
+        }
+      }
+
+      return '';
+    }
+
+    function getTotalFromSummary(row) {
+      const summaryColumns =
+        row.Summary?.ColData || [];
+
+      for (
+        let index = summaryColumns.length - 1;
+        index >= 0;
+        index -= 1
+      ) {
+        const value =
+          summaryColumns[index]?.value;
+
+        if (isNumericValue(value)) {
+          return safeNum(value);
+        }
+      }
+
+      return 0;
+    }
+
+    function walkReportRows(rows = []) {
       for (const row of rows) {
-        const columns = Array.isArray(row.ColData)
-          ? row.ColData
-          : [];
+        /*
+         * QuickBooks CustomerIncome reports often return
+         * each customer as a grouped section:
+         *
+         * Header = customer name
+         * Summary = customer total
+         */
+        const groupedCustomerName =
+          getCustomerNameFromHeader(row);
+
+        const groupedCustomerTotal =
+          getTotalFromSummary(row);
+
+        if (
+          groupedCustomerName &&
+          groupedCustomerTotal > 0
+        ) {
+          addCustomer(
+            groupedCustomerName,
+            groupedCustomerTotal
+          );
+
+          /*
+           * Do not also read the child rows because the
+           * summary already contains the full customer total.
+           */
+          continue;
+        }
+
+        /*
+         * Fallback for reports returned as flat Data rows.
+         */
+        const columns =
+          Array.isArray(row.ColData)
+            ? row.ColData
+            : [];
 
         const isDataRow =
           row.type === 'Data' ||
@@ -174,28 +260,19 @@ apiRouter.get('/customers/top', async (req, res) => {
           const revenue =
             getLastNumericColumn(columns);
 
-          if (
-            customerName &&
-            !isReportTotalRow(customerName) &&
-            revenue !== 0
-          ) {
-            const existing =
-              customerTotals.get(customerName) || 0;
-
-            customerTotals.set(
-              customerName,
-              existing + revenue
-            );
-          }
+          addCustomer(
+            customerName,
+            revenue
+          );
         }
 
         if (Array.isArray(row.Rows?.Row)) {
-          extractCustomerRows(row.Rows.Row);
+          walkReportRows(row.Rows.Row);
         }
       }
     }
 
-    extractCustomerRows(raw.Rows?.Row || []);
+    walkReportRows(raw.Rows?.Row || []);
 
     const customers = Array
       .from(customerTotals.entries())
@@ -206,12 +283,15 @@ apiRouter.get('/customers/top', async (req, res) => {
       .filter(customer => customer.revenue > 0)
       .sort((a, b) => b.revenue - a.revenue);
 
-    const topN = customers.slice(0, 10);
+    const topCustomers =
+      customers.slice(0, 10);
 
-    const topTotal = topN.reduce(
-      (sum, customer) => sum + customer.revenue,
-      0
-    );
+    const topTotal =
+      topCustomers.reduce(
+        (sum, customer) =>
+          sum + customer.revenue,
+        0
+      );
 
     const plRaw = await qboReport(
       req.qbo,
@@ -224,22 +304,22 @@ apiRouter.get('/customers/top', async (req, res) => {
     );
 
     const pl = parsePL(plRaw);
-    const plRevenue = safeNum(pl.revenue);
+    const totalRevenue =
+      safeNum(pl.revenue);
 
     res.json({
-      customers: topN.map(customer => ({
+      customers: topCustomers.map(customer => ({
         ...customer,
+
         pct:
-          plRevenue > 0
-            ? customer.revenue / plRevenue
+          totalRevenue > 0
+            ? customer.revenue / totalRevenue
             : 0
       })),
-      totalRevenue: plRevenue,
+
+      totalRevenue,
       topTotal,
-      otherRevenue: Math.max(
-        0,
-        plRevenue - topTotal
-      ),
+      otherRevenue: totalRevenue - topTotal,
       startDate,
       endDate
     });
@@ -261,8 +341,10 @@ apiRouter.get('/expenses', async (req, res) => {
       {
         start_date:
           req.query.start || currentYearStart(),
+
         end_date:
           req.query.end || today(),
+
         accounting_method: 'Accrual',
         summarize_column_by: 'Month'
       }
@@ -291,10 +373,14 @@ apiRouter.get('/expenses', async (req, res) => {
                 monthMap[key] = {
                   month: date.toLocaleString(
                     'en-GB',
-                    { month: 'short' }
+                    {
+                      month: 'short'
+                    }
                   ),
+
                   revenue: 0,
                   expenses: 0,
+
                   order: new Date(
                     date.getFullYear(),
                     date.getMonth(),
@@ -323,12 +409,22 @@ apiRouter.get('/expenses', async (req, res) => {
 
     const sorted = Object
       .values(monthMap)
-      .sort((a, b) => a.order - b.order);
+      .sort(
+        (a, b) =>
+          a.order.getTime() -
+          b.order.getTime()
+      );
 
     res.json({
       months: sorted.map(item => item.month),
-      revenue: sorted.map(item => item.revenue),
-      expenses: sorted.map(item => item.expenses)
+
+      revenue: sorted.map(
+        item => item.revenue
+      ),
+
+      expenses: sorted.map(
+        item => item.expenses
+      )
     });
   } catch (err) {
     handleError(res, err);
@@ -344,15 +440,22 @@ function today() {
     .slice(0, 10);
 }
 
+/*
+ * Financial year starts on 1 April.
+ *
+ * For example:
+ * January 2027 returns 2026-04-01.
+ * July 2026 returns 2026-04-01.
+ */
 function currentYearStart() {
   const now = new Date();
 
-  const year =
+  const financialYear =
     now.getMonth() >= 3
       ? now.getFullYear()
       : now.getFullYear() - 1;
 
-  return `${year}-04-01`;
+  return `${financialYear}-04-01`;
 }
 
 function daysOverdue(dateValue) {
@@ -372,9 +475,10 @@ function daysOverdue(dateValue) {
   dueDate.setHours(0, 0, 0, 0);
 
   const difference = Math.floor(
-    (currentDate.getTime() -
-      dueDate.getTime()) /
-      86400000
+    (
+      currentDate.getTime() -
+      dueDate.getTime()
+    ) / 86400000
   );
 
   return difference > 0
@@ -386,7 +490,7 @@ function safeNum(value) {
   if (
     value === null ||
     value === undefined ||
-    value === ''
+    String(value).trim() === ''
   ) {
     return 0;
   }
@@ -397,11 +501,32 @@ function safeNum(value) {
     .replace(/\((.*)\)/, '-$1')
     .trim();
 
-  const number = Number.parseFloat(cleaned);
+  const number =
+    Number.parseFloat(cleaned);
 
   return Number.isFinite(number)
     ? number
     : 0;
+}
+
+function isNumericValue(value) {
+  if (
+    value === null ||
+    value === undefined ||
+    String(value).trim() === ''
+  ) {
+    return false;
+  }
+
+  const cleaned = String(value)
+    .replace(/,/g, '')
+    .replace(/[£$€]/g, '')
+    .replace(/\((.*)\)/, '-$1')
+    .trim();
+
+  return Number.isFinite(
+    Number.parseFloat(cleaned)
+  );
 }
 
 function getLastNumericColumn(columns = []) {
@@ -410,28 +535,11 @@ function getLastNumericColumn(columns = []) {
     index >= 1;
     index -= 1
   ) {
-    const rawValue =
+    const value =
       columns[index]?.value;
 
-    if (
-      rawValue === null ||
-      rawValue === undefined ||
-      rawValue === ''
-    ) {
-      continue;
-    }
-
-    const cleaned = String(rawValue)
-      .replace(/,/g, '')
-      .replace(/[£$€]/g, '')
-      .replace(/\((.*)\)/, '-$1')
-      .trim();
-
-    const value =
-      Number.parseFloat(cleaned);
-
-    if (Number.isFinite(value)) {
-      return value;
+    if (isNumericValue(value)) {
+      return safeNum(value);
     }
   }
 
@@ -440,29 +548,34 @@ function getLastNumericColumn(columns = []) {
 
 function isReportTotalRow(name) {
   const normalised =
-    String(name)
+    String(name || '')
       .trim()
       .toLowerCase();
 
   return (
     normalised === 'total' ||
     normalised === 'grand total' ||
+    normalised === 'net income' ||
+    normalised === 'gross profit' ||
     normalised.startsWith('total ')
   );
 }
 
 function handleError(res, err) {
+  const details =
+    err.response?.data ||
+    err.message ||
+    'Unknown error';
+
   console.error(
     'API ERROR:',
-    err.response?.data || err.message
+    details
   );
 
   res
     .status(err.status || 500)
     .json({
       error: 'API failed',
-      details:
-        err.response?.data ||
-        err.message
+      details
     });
 }

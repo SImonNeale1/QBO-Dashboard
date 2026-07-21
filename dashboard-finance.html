@@ -409,12 +409,35 @@ async function loadPL() {
   if(bvaData)renderBvaYtd();
 }
 async function loadBS() {
-  const data=await apiFetch('/balance-sheet'); if(!data)return;
-  bsData=data;
-  document.getElementById('kpi-cash').textContent=fmt(data.cash);
-  document.getElementById('bs-date').textContent=data.asOf||'Today';
-  const rows=[['Current assets',data.currentAssets],['— Cash & bank',data.cash],['— Accounts receivable',data.accountsReceivable],['Fixed assets',data.fixedAssets],['Total assets',data.totalAssets,true],['Current liabilities',data.currentLiabilities],['Long-term liabilities',data.longTermLiabilities],['Net assets',data.netAssets,true]];
-  document.getElementById('bs-body').innerHTML=rows.map(([l,v,b])=>`<tr><td${b?' class="bold"':''}>${l}</td><td class="num${b?' bold':''}">${fmt(v)}</td></tr>`).join('');
+  const data = await apiFetch('/balance-sheet');
+  if (!data) return;
+
+  bsData = data;
+
+  document.getElementById('kpi-cash').textContent = fmt(data.cash);
+  document.getElementById('bs-date').textContent = data.asOf || 'Today';
+
+  const rows = [
+    ['Fixed Assets', data.fixedAssets],
+    ['Cash & Bank', data.cash],
+    ['Accounts Receivable', data.accountsReceivable],
+    ['Current Assets', data.currentAssets],
+    ['Total Assets', data.totalAssets, true],
+    ['Accounts Payable', data.accountsPayable],
+    ['Current Liabilities', data.currentLiabilities],
+    ['Long Term Liabilities', data.longTermLiabilities],
+    ['Total Liabilities', data.totalLiabilities, true],
+    ['Net Assets', data.netAssets, true]
+  ];
+
+  document.getElementById('bs-body').innerHTML = rows
+    .map(([label, value, bold]) => `
+      <tr>
+        <td${bold ? ' class="bold"' : ''}>${label}</td>
+        <td class="num${bold ? ' bold' : ''}">${fmt(value)}</td>
+      </tr>
+    `)
+    .join('');
 }
 async function loadInvoices() {
   const data=await apiFetch('/invoices/outstanding'); if(!data)return;

@@ -502,9 +502,62 @@ function setBvaView(view) {
   document.getElementById('bva-month-view').style.display=view==='month'?'':'none';
   document.getElementById('bva-ytd-btn').classList.toggle('active',view==='ytd');
   document.getElementById('bva-month-btn').classList.toggle('active',view==='month');
+
+  if(view==='month') {
+    buildMonthTabs();
+    renderBvaMonth();
+  } else {
+    document.getElementById('pl-period').textContent='YTD';
+  }
 }
-function buildMonthTabs() {}
-function selectMonth() {}
+function getBudgetMonths() {
+  if(Array.isArray(bvaData?.months)) return bvaData.months;
+  if(Array.isArray(bvaData?.monthly)) return bvaData.monthly;
+  if(Array.isArray(bvaData?.byMonth)) return bvaData.byMonth;
+  return [];
+}
+function monthKey(month) {
+  return String(month?.key || month?.monthKey || month?.date || month?.startDate || month?.month || '');
+}
+function formatBudgetMonth(value) {
+  if(!value) return '';
+  const text=String(value);
+  const match=text.match(/^(\d{4})-(\d{2})/);
+  if(match) {
+    return new Date(Number(match[1]),Number(match[2])-1,1)
+      .toLocaleDateString('en-GB',{month:'short',year:'numeric'});
+  }
+  const date=new Date(value);
+  return Number.isNaN(date.getTime()) ? text : date.toLocaleDateString('en-GB',{month:'short',year:'numeric'});
+}
+function buildMonthTabs() {
+  const months=getBudgetMonths();
+  const tabs=document.getElementById('month-tabs');
+
+  if(!months.length) {
+    tabs.innerHTML='<span style="color:var(--muted);font-size:12px">No monthly budget data available</span>';
+    selectedMonth=null;
+    return;
+  }
+
+  const now=new Date();
+  const currentKey=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const currentIndex=months.findIndex(month=>monthKey(month).startsWith(currentKey));
+
+  if(selectedMonth===null || selectedMonth<0 || selectedMonth>=months.length) {
+    selectedMonth=currentIndex>=0 ? currentIndex : months.length-1;
+  }
+
+  tabs.innerHTML=months.map((month,index)=>{
+    const label=month?.label || month?.name || formatBudgetMonth(monthKey(month)) || `Month ${index+1}`;
+    return `<button class="month-tab ${index===selectedMonth?'active':''}" onclick="selectMonth(${index})">${label}</button>`;
+  }).join('');
+}
+function selectMonth(index) {
+  selectedMonth=Number(index);
+  buildMonthTabs();
+  renderBvaMonth();
+}
 const BVA_LINES=[
   {key:'revenue',label:'Revenue',divider:false},
   {key:'costOfSales',label:'Cost of Sales',divider:false},
@@ -668,7 +721,45 @@ function updateKpiBudget() {
     el.style.display='block';
   });
 }
-function renderBvaMonth() {}
+function renderBvaMonth() {
+  const body=document.getElementById('bva-month-body');
+  const months=getBudgetMonths();
+
+  if(!months.length) {
+    body.innerHTML='<tr><td colspan="5" class="loading">No monthly data available</td></tr>';
+    return;
+  }
+
+  if(selectedMonth===null || selectedMonth<0 || selectedMonth>=months.length) {
+    selectedMonth=months.length-1;
+  }
+
+  const month=months[selectedMonth] || {};
+  const monthData=month.bva || month.lines || month.data || month;
+
+  body.innerHTML=BVA_LINES.map(line=>{
+    const d=monthData[line.key] || {actual:0,budget:0};
+    const actual=Number(d.actual)||0;
+    const budget=Number(d.budget)||0;
+    const variance=actual-budget;
+    const variancePct=budget!==0 ? (variance/Math.abs(budget))*100 : 0;
+    const isExpense=line.key==='costOfSales' || line.key==='expenses';
+    const isBad=isExpense ? variance>0 : variance<0;
+    const color=!cfg.varColor ? '' : (isBad?'var(--red)':variance===0?'var(--muted)':'var(--green)');
+    const arrow=variance>0?'▲':variance<0?'▼':'';
+
+    return `<tr${line.divider?' class="bva-divider bold"':''}>
+      <td>${line.label}</td>
+      <td class="num">${fmt(actual)}</td>
+      <td class="num" style="color:var(--muted)">${fmt(budget)}</td>
+      <td class="num" style="color:${color}">${arrow}${fmt(Math.abs(variance))}</td>
+      <td class="num" style="color:${color}">${variancePct>0?'+':''}${variancePct.toFixed(1)}%</td>
+    </tr>`;
+  }).join('');
+
+  const label=month.label || month.name || formatBudgetMonth(monthKey(month));
+  document.getElementById('pl-period').textContent=label || 'Current month';
+}
   
 // ── Chart ──────────────────────────────────────────────────────────────────
 function buildChart(custData) {

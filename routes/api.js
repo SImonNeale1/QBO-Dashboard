@@ -888,9 +888,16 @@ async function buildSalesAnalysis(
         `WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`
       ),
 
+      /*
+       * QuickBooks returns only active list entities unless Active is
+       * explicitly filtered. Historical invoices may reference inactive
+       * products or categories, so both states are required for reliable
+       * category classification.
+       */
       qboQueryAllSalesRecords(
         qbo,
-        'Item'
+        'Item',
+        'WHERE Active IN (true, false)'
       )
     ]);
 

@@ -694,7 +694,7 @@ apiRouter.get('/expenses', async (req, res) => {
  * Sales dashboard
  *
  * Classification priority for each invoice line:
- * 1. Reseller = item category "Rycote Sales"
+ * 1. Reseller = item category "RYCOTE Products" (legacy alias: "Rycote Sales")
  * 2. Advantage = item category "Advantage"
  * 3. Everything else = Other
  *
@@ -753,7 +753,8 @@ apiRouter.get('/sales/monthly', async (req, res) => {
         basis: 'Item Category',
 
         reseller: {
-          category: 'Rycote Sales'
+          category: 'RYCOTE Products',
+          legacyCategory: 'Rycote Sales'
         },
 
         advantage: {
@@ -837,7 +838,8 @@ apiRouter.get(
 
         excludedFromDiscountCalculations: {
           basis: 'Item Category',
-          category: 'Rycote Sales'
+          category: 'RYCOTE Products',
+          legacyCategory: 'Rycote Sales'
         }
       });
     } catch (err) {
@@ -954,6 +956,10 @@ apiRouter.get('/sales/category-debug', async (req, res) => {
             classification,
             detectedCategoryPath: getItemCategoryPath(rawItem, itemIndex),
             resellerMatch: itemHasCategory(
+              itemRef,
+              itemIndex,
+              'RYCOTE Products'
+            ) || itemHasCategory(
               itemRef,
               itemIndex,
               'Rycote Sales'
@@ -1078,6 +1084,10 @@ async function traceInvoiceForSalesClassification(
           itemRef,
           classification: classifySalesLine(invoice, line, itemIndex),
           resellerMatch: itemHasCategory(
+            itemRef,
+            itemIndex,
+            'RYCOTE Products'
+          ) || itemHasCategory(
             itemRef,
             itemIndex,
             'Rycote Sales'
@@ -1868,11 +1878,16 @@ function classifySalesLine(
     );
 
   /*
-   * Reseller products are Item Category "Rycote Sales" and Class "CGL".
+   * Reseller products are Item Category "RYCOTE Products" (legacy alias "Rycote Sales") and Class "CGL".
    * Use either field because historical QBO invoice lines do not always expose
    * enough Item hierarchy data to reconstruct the category reliably.
    */
   if (
+    itemHasCategory(
+      itemRef,
+      itemIndex,
+      'RYCOTE Products'
+    ) ||
     itemHasCategory(
       itemRef,
       itemIndex,

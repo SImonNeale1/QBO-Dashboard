@@ -349,104 +349,342 @@ apiRouter.get('/customers/top', async (req, res) => {
 });
 
 /**
- * Revenue vs Expenses
+ * Revenue vs Expenses - monthly
  */
 apiRouter.get('/expenses', async (req, res) => {
   try {
     if (!ensureQBO(req, res)) return;
 
+    const startDate =
+      req.query.start || currentYearStart();
+
+    const endDate =
+      req.query.end || today();
+
     const raw = await qboReport(
       req.qbo,
       'ProfitAndLoss',
       {
-        start_date:
-          req.query.start || currentYearStart(),
-
-        end_date:
-          req.query.end || today(),
-
+        start_date: startDate,
+        end_date: endDate,
         accounting_method: 'Accrual',
         summarize_column_by: 'Month'
       }
     );
 
-    const monthMap = {};
+    const reportColumns =
+      Array.isArray(raw?.Columns?.Column)
+        ? raw.Columns.Column
+        : [];
 
-    function walk(rows = []) {
-      for (const row of rows) {
-        if (row.type === 'Data') {
-          const dateValue =
-            row.ColData?.[0]?.id ||
-            row.ColData?.[0]?.value;
-
-          const amount =
-            safeNum(row.ColData?.[1]?.value);
-
-          if (dateValue) {
-            const date = new Date(dateValue);
-
-            if (!Number.isNaN(date.getTime())) {
-              const key =
-                `${date.getFullYear()}-${date.getMonth()}`;
-
-              if (!monthMap[key]) {
-                monthMap[key] = {
-                  month: date.toLocaleString(
-                    'en-GB',
-                    {
-                      month: 'short'
-                    }
-                  ),
-
-                  revenue: 0,
-                  expenses: 0,
-
-                  order: new Date(
-                    date.getFullYear(),
-                    date.getMonth(),
-                    1
-                  )
-                };
-              }
-
-              if (amount >= 0) {
-                monthMap[key].revenue += amount;
-              } else {
-                monthMap[key].expenses +=
-                  Math.abs(amount);
-              }
-            }
-          }
+    /*
+     * QuickBooks monthly P&L reports normally return:
+     *
+     * Column 0 = account or section name
+     * Column 1 onwards = individual months
+     */
+    const monthColumns = reportColumns
+      .map((column, index) => {
+        if (index === 0) {
+          return null;
         }
 
-        if (Array.isArray(row.Rows?.Row)) {
-          walk(row.Rows.Row);
-        }
-      }
-    }
+        const metadata =
+          Array.isArray(column?.MetaData)
+            ? column.MetaData
+            : [];
 
-    walk(raw.Rows?.Row || []);
+        const columnKey = metadata.find(
+          item => item?.Name === 'ColKey'
+        )?.Value;
 
-    const sorted = Object
-      .values(monthMap)
-      .sort(
-        (a, b) =>
-          a.order.getTime() -
-          b.order.getTime()
+        const title = String(
+          column?.ColTitle ||
+          columnKey ||
+          ''
+        ).trim();
+
+        return {
+          index,
+          title,
+          key: normaliseMonthKey(
+            columnKey || title
+          )
+        };
+      })
+      .filter(
+        column =>
+          column &&
+          column.title
       );
 
+    function normaliseLabel(value) {
+      return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/&/g, 'and')
+        .replace(/\s+/g, ' ');
+    }
+
+    function normaliseMonthKey(value) {
+      const text =
+        String(value || '').trim();
+
+      const directMatch = text.match(
+        /^(\d{4})[-/](\d{1,2})/
+      );
+
+      if (directMatch) {
+        return (
+          `${directMatch[1]}-` +
+          String(directMatch[2]).padStart(
+            2,
+            '0'
+          )
+        );
+      }
+
+      const parsedDate =
+        new Date(text);
+
+      if (
+        Number.isNaN(
+          parsedDate.getTime()
+        )
+      ) {
+        return '';
+      }
+
+      return (
+        `${parsedDate.getFullYear()}-` +
+        String(
+          parsedDate.getMonth() + 1
+        ).padStart(2, '0')
+      );
+    }
+
+    function sectionLabels(row) {
+      return [
+        row?.Header?.ColData?.[0]?.value,
+        row?.ColData?.[0]?.value,
+        row?.Summary?.ColData?.[0]?.value
+      ]
+        .map(normaliseLabel)
+        .filter(Boolean);
+    }
+
+    function findSection(
+      rows,
+      wantedLabels
+    ) {
+      const wanted =
+        wantedLabels.map(
+          normaliseLabel
+        );
+
+      for (const row of rows || []) {
+        const labels =
+          sectionLabels(row);
+
+        if (
+          labels.some(label =>
+            wanted.includes(label)
+          )
+        ) {
+          return row;
+        }
+
+        const nested =
+          findSection(
+            row?.Rows?.Row || [],
+            wantedLabels
+          );
+
+        if (nested) {
+          return nested;
+        }
+      }
+
+      return null;
+    }
+
+    function valuesFromColumns(
+      columns = []
+    ) {
+      return monthColumns.map(
+        ({ index }) =>
+          safeNum(
+            columns[index]?.value
+          )
+      );
+    }
+
+    function rowValues(row) {
+      if (!row) {
+        return monthColumns.map(
+          () => 0
+        );
+      }
+
+      const summaryColumns =
+        Array.isArray(
+          row?.Summary?.ColData
+        )
+          ? row.Summary.ColData
+          : [];
+
+      if (summaryColumns.length) {
+        return valuesFromColumns(
+          summaryColumns
+        );
+      }
+
+      const dataColumns =
+        Array.isArray(row?.ColData)
+          ? row.ColData
+          : [];
+
+      if (dataColumns.length) {
+        return valuesFromColumns(
+          dataColumns
+        );
+      }
+
+      return monthColumns.map(
+        () => 0
+      );
+    }
+
+    function addArrays(
+      ...arrays
+    ) {
+      return monthColumns.map(
+        (_, index) =>
+          arrays.reduce(
+            (total, values) =>
+              total +
+              safeNum(
+                values?.[index]
+              ),
+            0
+          )
+      );
+    }
+
+    const reportRows =
+      Array.isArray(raw?.Rows?.Row)
+        ? raw.Rows.Row
+        : [];
+
+    const revenueRow =
+      findSection(
+        reportRows,
+        [
+          'Total Income',
+          'Total Revenue',
+          'Income',
+          'Revenue'
+        ]
+      );
+
+    const costOfSalesRow =
+      findSection(
+        reportRows,
+        [
+          'Total Cost of Sales',
+          'Total Cost of Goods Sold',
+          'Cost of Sales',
+          'Cost of Goods Sold'
+        ]
+      );
+
+    const operatingExpensesRow =
+      findSection(
+        reportRows,
+        [
+          'Total Expenses',
+          'Expenses',
+          'Operating Expenses'
+        ]
+      );
+
+    const otherExpensesRow =
+      findSection(
+        reportRows,
+        [
+          'Total Other Expenses',
+          'Other Expenses'
+        ]
+      );
+
+    const revenue =
+      rowValues(revenueRow);
+
+    const costOfSales =
+      rowValues(costOfSalesRow);
+
+    const operatingExpenses =
+      rowValues(
+        operatingExpensesRow
+      );
+
+    const otherExpenses =
+      rowValues(
+        otherExpensesRow
+      );
+
+    /*
+     * Total chart expenses:
+     *
+     * Cost of Sales
+     * + Operating Expenses
+     * + Other Expenses
+     */
+    const expenses =
+      addArrays(
+        costOfSales,
+        operatingExpenses,
+        otherExpenses
+      );
+
+    const months =
+      monthColumns.map(column => {
+        const parsedDate =
+          new Date(column.title);
+
+        if (
+          !Number.isNaN(
+            parsedDate.getTime()
+          )
+        ) {
+          return parsedDate
+            .toLocaleDateString(
+              'en-GB',
+              {
+                month: 'short',
+                year: '2-digit'
+              }
+            );
+        }
+
+        return column.title;
+      });
+
     res.json({
-      months: sorted.map(
-        item => item.month
-      ),
+      months,
 
-      revenue: sorted.map(
-        item => item.revenue
-      ),
+      monthKeys:
+        monthColumns.map(
+          column => column.key
+        ),
 
-      expenses: sorted.map(
-        item => item.expenses
-      )
+      revenue,
+      expenses,
+      costOfSales,
+      operatingExpenses,
+
+      startDate,
+      endDate
     });
   } catch (err) {
     handleError(res, err);

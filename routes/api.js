@@ -1825,7 +1825,6 @@ async function buildSalesAnalysis(
   ) {
     month.totalSales =
       month.advantageSales +
-      month.resellerSales +
       month.otherSales;
 
     ytdAdvantage +=
@@ -1848,7 +1847,6 @@ async function buildSalesAnalysis(
 
     month.ytdTotal =
       ytdAdvantage +
-      ytdReseller +
       ytdOther;
 
     month.advDiscountPct =

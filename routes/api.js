@@ -908,12 +908,9 @@ apiRouter.get('/sales/category-debug', async (req, res) => {
     const lines = [];
 
     for (const invoice of selectedInvoices) {
-      const invoiceLines = Array.isArray(invoice.Line)
-        ? invoice.Line
-        : [];
+      const invoiceLines = extractInvoiceSalesItemLines(invoice);
 
       for (const line of invoiceLines) {
-        if (line.DetailType !== 'SalesItemLineDetail') continue;
 
         const itemRef = line.SalesItemLineDetail?.ItemRef || null;
         const itemId = String(itemRef?.value || '');
@@ -1202,18 +1199,7 @@ async function buildSalesAnalysis(
     }
 
     const salesLines =
-      (
-        Array.isArray(
-          invoice.Line
-        )
-          ? invoice.Line
-          : []
-      )
-        .filter(
-          line =>
-            line.DetailType ===
-            'SalesItemLineDetail'
-        )
+      extractInvoiceSalesItemLines(invoice)
         .map(line => {
           const grossAmount =
             Math.max(
@@ -1407,6 +1393,62 @@ async function buildSalesAnalysis(
     startDate,
     endDate
   };
+}
+
+/**
+ * Return every sales-item line on an invoice, including products nested inside
+ * QuickBooks Group/Bundle lines.
+ *
+ * QBO represents a group as a GroupLineDetail containing its own Line array.
+ * Reading only invoice.Line misses those products completely. If a group has
+ * no usable child sales lines, retain the group itself as a synthetic sales
+ * line so its GroupItemRef and amount can still be classified.
+ */
+function extractInvoiceSalesItemLines(invoice) {
+  const results = [];
+
+  function visit(lines) {
+    for (const line of Array.isArray(lines) ? lines : []) {
+      if (line?.DetailType === 'SalesItemLineDetail') {
+        results.push(line);
+        continue;
+      }
+
+      const groupDetail = line?.GroupLineDetail;
+      const nestedLines = Array.isArray(groupDetail?.Line)
+        ? groupDetail.Line
+        : [];
+
+      if (
+        line?.DetailType === 'GroupLineDetail' ||
+        nestedLines.length > 0
+      ) {
+        const before = results.length;
+        visit(nestedLines);
+
+        const childValue = results
+          .slice(before)
+          .reduce(
+            (total, childLine) =>
+              total + Math.max(0, safeNum(childLine?.Amount)),
+            0
+          );
+
+        if (childValue <= 0 && groupDetail?.GroupItemRef?.value) {
+          results.push({
+            ...line,
+            DetailType: 'SalesItemLineDetail',
+            SalesItemLineDetail: {
+              ItemRef: groupDetail.GroupItemRef
+            }
+          });
+        }
+      }
+    }
+  }
+
+  visit(invoice?.Line);
+  return results;
 }
 
 /**

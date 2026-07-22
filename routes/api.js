@@ -721,6 +721,18 @@ apiRouter.get('/sales/monthly', async (req, res) => {
         year
       );
 
+    const debugInvoiceNumber =
+      String(req.query.debugInvoice || '').trim();
+
+    const debugInvoice =
+      debugInvoiceNumber
+        ? await traceInvoiceForSalesClassification(
+            req.qbo,
+            year,
+            debugInvoiceNumber
+          )
+        : null;
+
     res.json({
       year,
 
@@ -732,6 +744,10 @@ apiRouter.get('/sales/monthly', async (req, res) => {
 
       months:
         analysis.months,
+
+      ...(debugInvoiceNumber
+        ? { debugInvoice }
+        : {}),
 
       classificationRules: {
         basis: 'Item Category',
@@ -1000,6 +1016,132 @@ apiRouter.get('/sales/category-debug', async (req, res) => {
 });
 
 /**
+ * Trace one real QuickBooks invoice through the same item-category
+ * classification used by the monthly sales dashboard.
+ *
+ * Usage:
+ *   /api/sales/monthly?year=2026&debugInvoice=2937
+ */
+async function traceInvoiceForSalesClassification(
+  qbo,
+  year,
+  invoiceNumber
+) {
+  const startDate = `${year}-04-01`;
+  const endDate = `${year + 1}-03-31`;
+
+  const [invoices, items] = await Promise.all([
+    qboQueryAllSalesRecords(
+      qbo,
+      'Invoice',
+      `WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`
+    ),
+    qboQueryAllItems(qbo)
+  ]);
+
+  const invoice = invoices.find(record =>
+    String(record.DocNumber || '').trim() === invoiceNumber ||
+    String(record.Id || '').trim() === invoiceNumber
+  );
+
+  if (!invoice) {
+    return {
+      requested: invoiceNumber,
+      found: false,
+      dateRange: { startDate, endDate },
+      invoicesChecked: invoices.length
+    };
+  }
+
+  const itemIndex = new Map();
+  for (const item of items) {
+    itemIndex.set(String(item.Id), item);
+  }
+
+  const tracedLines = [];
+
+  function walkLines(lines = [], location = 'invoice.Line') {
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      const lineLocation = `${location}[${index}]`;
+
+      if (line?.DetailType === 'SalesItemLineDetail') {
+        const itemRef = line.SalesItemLineDetail?.ItemRef || null;
+        const itemId = String(itemRef?.value || '');
+        const item = itemId ? itemIndex.get(itemId) || null : null;
+
+        tracedLines.push({
+          location: lineLocation,
+          lineId: line.Id || null,
+          amount: safeNum(line.Amount),
+          description: line.Description || null,
+          itemRef,
+          classification: classifySalesLine(invoice, line, itemIndex),
+          resellerMatch: itemHasCategory(
+            itemRef,
+            itemIndex,
+            'Rycote Sales'
+          ),
+          advantageMatch: itemHasCategory(
+            itemRef,
+            itemIndex,
+            'Advantage'
+          ),
+          itemFound: Boolean(item),
+          item: item
+            ? {
+                Id: item.Id,
+                Name: item.Name,
+                FullyQualifiedName: item.FullyQualifiedName,
+                Type: item.Type,
+                SubItem: item.SubItem,
+                ParentRef: item.ParentRef,
+                Active: item.Active
+              }
+            : null,
+          categoryPath: getItemCategoryPath(item, itemIndex),
+          parentChain: buildItemParentChain(item, itemIndex).map(entry => ({
+            parentRef: entry.parentRef,
+            parentItem: entry.parentItem
+              ? {
+                  Id: entry.parentItem.Id,
+                  Name: entry.parentItem.Name,
+                  FullyQualifiedName: entry.parentItem.FullyQualifiedName,
+                  Type: entry.parentItem.Type,
+                  SubItem: entry.parentItem.SubItem,
+                  ParentRef: entry.parentItem.ParentRef,
+                  Active: entry.parentItem.Active
+                }
+              : null
+          }))
+        });
+      }
+
+      const nestedLines = line?.GroupLineDetail?.Line;
+      if (Array.isArray(nestedLines)) {
+        walkLines(nestedLines, `${lineLocation}.GroupLineDetail.Line`);
+      }
+    }
+  }
+
+  walkLines(Array.isArray(invoice.Line) ? invoice.Line : []);
+
+  return {
+    requested: invoiceNumber,
+    found: true,
+    invoice: {
+      Id: invoice.Id,
+      DocNumber: invoice.DocNumber,
+      TxnDate: invoice.TxnDate,
+      TotalAmt: invoice.TotalAmt
+    },
+    itemsLoaded: items.length,
+    tracedLineCount: tracedLines.length,
+    lines: tracedLines
+  };
+}
+
+/**
  * Build the live sales analysis from QuickBooks invoices and items.
  */
 async function buildSalesAnalysis(
@@ -1045,17 +1187,6 @@ async function buildSalesAnalysis(
       item
     );
   }
-
-  /*
-   * The bulk Item query is not guaranteed to include every product/category
-   * referenced by historical transactions. Resolve all referenced Items and
-   * their ParentRef hierarchy directly before classification.
-   */
-  await hydrateReferencedItems(
-    qbo,
-    invoices,
-    itemIndex
-  );
 
   const currentDate =
     new Date();
@@ -1213,12 +1344,25 @@ async function buildSalesAnalysis(
     }
 
     const salesLines =
-      flattenInvoiceSalesLines(invoice.Line)
+      (
+        Array.isArray(
+          invoice.Line
+        )
+          ? invoice.Line
+          : []
+      )
+        .filter(
+          line =>
+            line.DetailType ===
+            'SalesItemLineDetail'
+        )
         .map(line => {
           const grossAmount =
             Math.max(
               0,
-              safeNum(line.Amount)
+              safeNum(
+                line.Amount
+              )
             );
 
           return {
@@ -1234,7 +1378,8 @@ async function buildSalesAnalysis(
         })
         .filter(
           line =>
-            line.grossAmount > 0
+            line.grossAmount >
+            0
         );
 
     const invoiceGross =
@@ -1475,104 +1620,6 @@ async function qboQueryAllItems(qbo) {
   }
 
   return Array.from(uniqueItems.values());
-}
-
-
-/**
- * Return every valued SalesItemLineDetail, including products nested inside
- * QuickBooks Group/Bundle lines. If child lines have no values, retain the
- * group line so its own ItemRef and amount can still be classified.
- */
-function flattenInvoiceSalesLines(lines = []) {
-  const results = [];
-
-  for (const line of Array.isArray(lines) ? lines : []) {
-    if (line?.DetailType === 'SalesItemLineDetail') {
-      results.push(line);
-      continue;
-    }
-
-    if (line?.DetailType !== 'GroupLineDetail') {
-      continue;
-    }
-
-    const children =
-      line?.GroupLineDetail?.Line ||
-      line?.GroupLineDetail?.line ||
-      [];
-
-    const nested = flattenInvoiceSalesLines(children);
-    const valuedNested = nested.filter(child => safeNum(child?.Amount) > 0);
-
-    if (valuedNested.length > 0) {
-      results.push(...valuedNested);
-      continue;
-    }
-
-    const groupItemRef = line?.GroupLineDetail?.GroupItemRef;
-    if (groupItemRef?.value && safeNum(line?.Amount) > 0) {
-      results.push({
-        ...line,
-        DetailType: 'SalesItemLineDetail',
-        SalesItemLineDetail: {
-          ItemRef: groupItemRef
-        }
-      });
-    }
-  }
-
-  return results;
-}
-
-/**
- * Directly retrieve transaction-referenced Items that the bulk Item query did
- * not return, then walk and retrieve every missing ParentRef category. This is
- * essential for historical/inactive products and category records in QBO.
- */
-async function hydrateReferencedItems(qbo, invoices, itemIndex) {
-  const pending = [];
-  const queued = new Set();
-
-  const queueId = value => {
-    const id = String(value || '').trim();
-    if (!id || itemIndex.has(id) || queued.has(id)) return;
-    queued.add(id);
-    pending.push(id);
-  };
-
-  for (const invoice of invoices || []) {
-    for (const line of flattenInvoiceSalesLines(invoice?.Line)) {
-      queueId(line?.SalesItemLineDetail?.ItemRef?.value);
-    }
-  }
-
-  /* Also resolve missing parents of Items returned by the bulk query. */
-  for (const item of itemIndex.values()) {
-    queueId(item?.ParentRef?.value || item?.ParentRef);
-  }
-
-  while (pending.length > 0) {
-    const id = pending.shift();
-
-    try {
-      const response = await qboQuery(
-        qbo,
-        `SELECT * FROM Item WHERE Id = '${id}' MAXRESULTS 1`
-      );
-
-      const item = response?.QueryResponse?.Item?.[0];
-      if (!item) continue;
-
-      itemIndex.set(String(item.Id), item);
-      queueId(item?.ParentRef?.value || item?.ParentRef);
-    } catch (err) {
-      /* One inaccessible/deleted Item must not stop the complete dashboard. */
-      console.warn(
-        `Unable to resolve QuickBooks Item ${id}:`,
-        err?.response?.data || err?.message || err
-      );
-    }
-  }
 }
 
 /**

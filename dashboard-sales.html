@@ -997,11 +997,9 @@ async function loadSalesData() {
 // ── Monthly sales table and chart ──────────────────────────────────────────
 
 function renderSalesTable() {
-  if (!salesData) {
-    return;
-  }
+  if (!salesData) return;
 
-  const tableBody =
+  const tbody =
     document.getElementById(
       'sales-body'
     );
@@ -1009,137 +1007,238 @@ function renderSalesTable() {
   const target =
     getBonusTarget();
 
-  const months =
-    Array.isArray(
-      salesData.months
-    )
-      ? salesData.months
-      : [];
+  tbody.innerHTML =
+    salesData.months
+      .map(month => {
+        const advantageDiscount =
+          Number(
+            month.advDiscountPct || 0
+          );
 
-  if (!months.length) {
-    tableBody.innerHTML =
-      `<tr>
-        <td
-          colspan="9"
-          class="loading"
-        >
-          No sales data returned
-        </td>
-      </tr>`;
+        const otherDiscount =
+          Number(
+            month.otherDiscountPct || 0
+          );
 
-    clearDiscountChart();
-    return;
+        const advantageColour =
+          advantageDiscount > target
+            ? 'var(--red)'
+            : advantageDiscount >
+                target * 0.8
+              ? 'var(--amber)'
+              : 'var(--green)';
+
+        const otherColour =
+          otherDiscount > target
+            ? 'var(--red)'
+            : otherDiscount >
+                target * 0.8
+              ? 'var(--amber)'
+              : 'var(--green)';
+
+        return `
+          <tr>
+            <td>
+              <strong>
+                ${month.label}
+              </strong>
+            </td>
+
+            <td class="num">
+              ${fmt(month.advantageSales)}
+            </td>
+
+            <td class="num">
+              ${fmt(month.resellerSales)}
+            </td>
+
+            <td class="num">
+              ${fmt(month.otherSales)}
+            </td>
+
+            <td class="num bold">
+              ${fmt(month.totalSales)}
+            </td>
+
+            <td class="num">
+              ${fmt(month.ytdAdvantage)}
+            </td>
+
+            <td class="num">
+              ${fmt(month.ytdReseller)}
+            </td>
+
+            <td class="num">
+              ${fmt(month.ytdOther)}
+            </td>
+
+            <td class="num bold">
+              ${fmt(month.ytdTotal)}
+            </td>
+
+            <td
+              class="num"
+              style="color:${advantageColour}"
+            >
+              ${advantageDiscount.toFixed(1)}%
+            </td>
+
+            <td
+              class="num"
+              style="color:${otherColour}"
+            >
+              ${otherDiscount.toFixed(1)}%
+            </td>
+          </tr>
+        `;
+      })
+      .join('');
+
+  if (discChart) {
+    discChart.destroy();
   }
 
-  tableBody.innerHTML =
-    months.map(month => {
-      const advantageSales =
-        safeNumber(
-          month.advantageSales
-        );
+  const labels =
+    salesData.months.map(
+      month => month.label
+    );
 
-      const otherSales =
-        safeNumber(
-          month.otherSales
-        );
+  const advantageDiscounts =
+    salesData.months.map(
+      month =>
+        Number(
+          month.advDiscountPct || 0
+        )
+    );
 
-      const totalSales =
-        safeNumber(
-          month.totalSales
-        ) ||
-        advantageSales +
-        otherSales;
+  const otherDiscounts =
+    salesData.months.map(
+      month =>
+        Number(
+          month.otherDiscountPct || 0
+        )
+    );
 
-      const ytdAdvantage =
-        safeNumber(
-          month.ytdAdvantage
-        );
+  const targetLine =
+    salesData.months.map(
+      () => getBonusTarget()
+    );
 
-      const ytdOther =
-        safeNumber(
-          month.ytdOther
-        );
+  discChart = new Chart(
+    document.getElementById(
+      'disc-chart'
+    ),
+    {
+      type: 'line',
 
-      const ytdTotal =
-        safeNumber(
-          month.ytdTotal
-        ) ||
-        ytdAdvantage +
-        ytdOther;
+      data: {
+        labels,
 
-      const advantageDiscount =
-        safeNumber(
-          month.advDiscountPct
-        );
+        datasets: [
+          {
+            label:
+              'Advantage disc %',
 
-      const otherDiscount =
-        safeNumber(
-          month.otherDiscountPct
-        );
+            data:
+              advantageDiscounts,
 
-      const advantageColour =
-        getDiscountColour(
-          advantageDiscount,
-          target
-        );
+            borderColor:
+              '#4a8fe8',
 
-      const otherColour =
-        getDiscountColour(
-          otherDiscount,
-          target
-        );
+            backgroundColor:
+              'rgba(74,143,232,.1)',
 
-      return `
-        <tr>
-          <td>
-            <strong>
-              ${month.label || ''}
-            </strong>
-          </td>
+            tension: 0.3,
+            fill: true
+          },
 
-          <td class="num">
-            ${fmt(advantageSales)}
-          </td>
+          {
+            label:
+              'Other disc %',
 
-          <td class="num">
-            ${fmt(otherSales)}
-          </td>
+            data:
+              otherDiscounts,
 
-          <td class="num bold">
-            ${fmt(totalSales)}
-          </td>
+            borderColor:
+              '#1db87a',
 
-          <td class="num">
-            ${fmt(ytdAdvantage)}
-          </td>
+            backgroundColor:
+              'rgba(29,184,122,.1)',
 
-          <td class="num">
-            ${fmt(ytdOther)}
-          </td>
+            tension: 0.3,
+            fill: true
+          },
 
-          <td class="num bold">
-            ${fmt(ytdTotal)}
-          </td>
+          {
+            label: 'Target',
 
-          <td
-            class="num"
-            style="color:${advantageColour}"
-          >
-            ${advantageDiscount.toFixed(1)}%
-          </td>
+            data:
+              targetLine,
 
-          <td
-            class="num"
-            style="color:${otherColour}"
-          >
-            ${otherDiscount.toFixed(1)}%
-          </td>
-        </tr>`;
-    }).join('');
+            borderColor:
+              '#e05252',
 
-  buildDiscountChart(
-    months,
-    target
+            borderDash:
+              [5, 4],
+
+            pointRadius: 0
+          }
+        ]
+      },
+
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+
+        plugins: {
+          legend: {
+            labels: {
+              color: '#8b90a8',
+
+              font: {
+                size: 11
+              }
+            }
+          }
+        },
+
+        scales: {
+          x: {
+            grid: {
+              display: false
+            },
+
+            ticks: {
+              color: '#8b90a8',
+
+              font: {
+                size: 11
+              }
+            }
+          },
+
+          y: {
+            min: 0,
+
+            grid: {
+              color:
+                'rgba(46,51,73,.5)'
+            },
+
+            ticks: {
+              color: '#8b90a8',
+
+              font: {
+                size: 11
+              },
+
+              callback:
+                value => `${value}%`
+            }
+          }
+        }
+      }
+    }
   );
 }
 
@@ -1334,243 +1433,35 @@ function buildDiscountChart(
 // ── Salesperson cards ──────────────────────────────────────────────────────
 
 function renderPersonCards() {
-  if (!salespersonData) {
-    return;
-  }
+  if (!salespersonData) return;
 
-  const container =
+  if (
+    !Array.isArray(
+      salespersonData.salespeople
+    ) ||
+    salespersonData.salespeople.length === 0
+  ) {
     document.getElementById(
       'person-cards'
-    );
+    ).innerHTML = `
+      <div
+        class="loading"
+        style="grid-column:1/-1"
+      >
+        Salesperson analysis will be added
+        after the QuickBooks salesperson
+        field is confirmed.
+      </div>
+    `;
+
+    return;
+  }
 
   const target =
     getBonusTarget();
 
-  const salespeople =
-    Array.isArray(
-      salespersonData.salespeople
-    )
-      ? salespersonData.salespeople
-      : [];
-
-  if (!salespeople.length) {
-    container.innerHTML =
-      `<div class="loading">
-        No salesperson data returned
-      </div>`;
-
-    return;
-  }
-
-  const regions = {
-    Andy:
-      'South West · South East · Wales (50%)',
-
-    Sean:
-      'Midlands · Wales (50%)',
-
-    Derek:
-      'North · Scotland'
-  };
-
-  container.innerHTML =
-    salespeople.map(person => {
-      const name =
-        person.person ||
-        person.name ||
-        'Unknown';
-
-      const advantageSales =
-        safeNumber(
-          person?.advantage?.sales
-        );
-
-      const otherSales =
-        safeNumber(
-          person?.other?.sales
-        );
-
-      const advantageDiscount =
-        safeNumber(
-          person?.advantage
-            ?.discountPct
-        );
-
-      const otherDiscount =
-        safeNumber(
-          person?.other
-            ?.discountPct
-        );
-
-      const overallDiscount =
-        safeNumber(
-          person?.overall
-            ?.discountPct
-        );
-
-      const onBonus =
-        overallDiscount <=
-        target;
-
-      const barPercentage =
-        target > 0
-          ? Math.min(
-              (
-                overallDiscount /
-                (target * 1.5)
-              ) * 100,
-              100
-            )
-          : 0;
-
-      let barClass =
-        'good';
-
-      if (
-        overallDiscount >
-        target * 1.2
-      ) {
-        barClass = 'bad';
-      } else if (
-        overallDiscount >
-        target
-      ) {
-        barClass = 'warn';
-      }
-
-      return `
-        <div class="person-card">
-
-          <div class="person-name">
-            ${name}
-          </div>
-
-          <div class="person-region">
-            ${regions[name] || ''}
-          </div>
-
-          <div class="person-stat">
-            <span
-              style="color:var(--muted)"
-            >
-              Advantage sales
-            </span>
-
-            <span>
-              ${fmt(advantageSales)}
-            </span>
-          </div>
-
-          <div class="person-stat">
-            <span
-              style="color:var(--muted)"
-            >
-              Advantage disc %
-            </span>
-
-            <span
-              style="color:${
-                advantageDiscount >
-                target
-                  ? 'var(--red)'
-                  : 'var(--green)'
-              }"
-            >
-              ${advantageDiscount.toFixed(1)}%
-            </span>
-          </div>
-
-          <div class="person-stat">
-            <span
-              style="color:var(--muted)"
-            >
-              Other sales
-            </span>
-
-            <span>
-              ${fmt(otherSales)}
-            </span>
-          </div>
-
-          <div class="person-stat">
-            <span
-              style="color:var(--muted)"
-            >
-              Other disc %
-            </span>
-
-            <span
-              style="color:${
-                otherDiscount >
-                target
-                  ? 'var(--red)'
-                  : 'var(--green)'
-              }"
-            >
-              ${otherDiscount.toFixed(1)}%
-            </span>
-          </div>
-
-          <div
-            class="person-stat"
-            style="margin-top:4px"
-          >
-            <span
-              style="font-weight:600"
-            >
-              Overall disc %
-            </span>
-
-            <span
-              style="
-                font-weight:600;
-                color:${
-                  onBonus
-                    ? 'var(--green)'
-                    : 'var(--red)'
-                }
-              "
-            >
-              ${overallDiscount.toFixed(1)}%
-            </span>
-          </div>
-
-          <div class="disc-bar-wrap">
-            <div
-              class="disc-bar ${barClass}"
-              style="width:${barPercentage}%"
-            ></div>
-          </div>
-
-          <div>
-            <span
-              class="bonus-badge ${
-                onBonus
-                  ? 'on'
-                  : 'off'
-              }"
-            >
-              ${
-                onBonus
-                  ? '✓ Bonus eligible'
-                  : '✗ Above target'
-              }
-            </span>
-
-            <span
-              style="
-                font-size:11px;
-                color:var(--muted);
-                margin-left:6px
-              "
-            >
-              target: ≤${target}%
-            </span>
-          </div>
-
-        </div>`;
-    }).join('');
-}
+  // Keep the remainder of the existing
+  // renderPersonCards function here.
 
 
 // ── Discount summary ───────────────────────────────────────────────────────

@@ -107,7 +107,6 @@ budgetRouter.get('/vs-actual', async (req, res) => {
     });
 
     const ytdActual = normaliseActualPL(parsePL(ytdActualRaw));
-
     const ytdBudget = extractBudgetTotals(
       budget,
       financialYearStart,
@@ -165,7 +164,6 @@ budgetRouter.get('/vs-actual', async (req, res) => {
     });
   } catch (err) {
     console.error('BVA ERROR:', err);
-
     res.status(err.status || 500).json({
       error: err.message || 'Unable to load Budget vs Actual'
     });
@@ -176,26 +174,16 @@ budgetRouter.get('/vs-actual', async (req, res) => {
 function buildBva(actual, budget) {
   return {
     revenue: buildLine(actual.revenue, budget.revenue),
-
     costOfSales: buildLine(
       actual.costOfSales,
       budget.costOfSales
     ),
-
     grossProfit: buildLine(
       actual.grossProfit,
       budget.grossProfit
     ),
-
-    expenses: buildLine(
-      actual.expenses,
-      budget.expenses
-    ),
-
-    netIncome: buildLine(
-      actual.netIncome,
-      budget.netIncome
-    )
+    expenses: buildLine(actual.expenses, budget.expenses),
+    netIncome: buildLine(actual.netIncome, budget.netIncome)
   };
 }
 
@@ -213,21 +201,25 @@ function buildLine(actualValue, budgetValue) {
 function normaliseActualPL(pl = {}) {
   const revenue = safeNumber(pl.revenue);
   const costOfSales = safeNumber(pl.costOfSales);
-  const expenses = safeNumber(pl.expenses);
+  const grossProfit = hasNumericValue(pl.grossProfit)
+    ? safeNumber(pl.grossProfit)
+    : revenue - costOfSales;
+  const parsedExpenses = safeNumber(pl.expenses);
+  const netIncome = hasNumericValue(pl.netIncome)
+    ? safeNumber(pl.netIncome)
+    : grossProfit - parsedExpenses;
+
+  // QuickBooks can show depreciation and interest earned outside the standard
+  // Total Expenses section. Treat everything between gross profit and net income
+  // as Expenses so the summary table fully reconciles to Net Profit.
+  const expenses = grossProfit - netIncome;
 
   return {
     revenue,
     costOfSales,
-
-    grossProfit: hasNumericValue(pl.grossProfit)
-      ? safeNumber(pl.grossProfit)
-      : revenue - costOfSales,
-
+    grossProfit,
     expenses,
-
-    netIncome: hasNumericValue(pl.netIncome)
-      ? safeNumber(pl.netIncome)
-      : revenue - costOfSales - expenses
+    netIncome
   };
 }
 
@@ -325,7 +317,6 @@ function selectBudget({
   const overlapsFinancialYear = budget =>
     (budget.BudgetDetail || []).some(line => {
       const date = parseBudgetDate(line.BudgetDate);
-
       return (
         date &&
         date >= startOfDay(financialYearStart) &&
@@ -393,7 +384,6 @@ function buildFinancialYearMonthRanges(
   currentDate
 ) {
   const ranges = [];
-
   let cursor = new Date(
     financialYearStart.getFullYear(),
     financialYearStart.getMonth(),
@@ -425,10 +415,7 @@ function buildFinancialYearMonthRanges(
         ? currentDate
         : normalMonthEnd;
 
-    ranges.push({
-      start: monthStart,
-      end: monthEnd
-    });
+    ranges.push({ start: monthStart, end: monthEnd });
 
     cursor = new Date(
       cursor.getFullYear(),
@@ -441,9 +428,7 @@ function buildFinancialYearMonthRanges(
 }
 
 function parseBudgetDate(value) {
-  if (!value) {
-    return null;
-  }
+  if (!value) return null;
 
   const parts = String(value).match(
     /^(\d{4})-(\d{2})-(\d{2})/
@@ -460,13 +445,11 @@ function parseBudgetDate(value) {
   }
 
   const date = new Date(value);
-
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function formatFinancialYearLabel(financialYearStart) {
   const startYear = financialYearStart.getFullYear();
-
   return `${startYear}-${String(startYear + 1).slice(-2)}`;
 }
 
@@ -487,7 +470,6 @@ function toIsoDate(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
-
   return `${year}-${month}-${day}`;
 }
 
@@ -518,25 +500,18 @@ function endOfDay(date) {
 // ── General helpers ────────────────────────────────────────────────────────
 function safeNumber(value) {
   const number = Number.parseFloat(value);
-
   return Number.isFinite(number) ? number : 0;
 }
 
 function hasNumericValue(value) {
-  if (
-    value === null ||
-    value === undefined ||
-    value === ''
-  ) {
+  if (value === null || value === undefined || value === '') {
     return false;
   }
-
   return Number.isFinite(Number.parseFloat(value));
 }
 
 function handleError(res, err) {
   console.error(err);
-
   res.status(err.status || 500).json({
     error: err.message || 'Unexpected server error'
   });

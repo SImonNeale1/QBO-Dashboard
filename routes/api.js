@@ -727,8 +727,8 @@ apiRouter.get('/sales/monthly', async (req, res) => {
 
     res.json({
       year,
-      startDate: `${year}-01-01`,
-      endDate: `${year}-12-31`,
+      startDate: `${year}-04-01`,
+      endDate: `${year + 1}-03-31`,
       months: analysis.months,
       resellerCustomers: [
         'Alltimes Products',

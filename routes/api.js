@@ -383,73 +383,43 @@ apiRouter.get('/expenses', async (req, res) => {
      * Column 0 = account or section name
      * Column 1 onwards = individual months
      */
+    const reportStartMonth = new Date(`${startDate}T00:00:00`);
+    const reportEndMonth = new Date(`${endDate}T00:00:00`);
+    const expectedMonthCount = Math.max(
+      0,
+      (reportEndMonth.getFullYear() - reportStartMonth.getFullYear()) * 12 +
+      reportEndMonth.getMonth() - reportStartMonth.getMonth() + 1
+    );
+
+    /*
+     * Do not parse QuickBooks display labels such as "Jul 22" or
+     * "Apr 26" as dates. They are ambiguous and JavaScript can read
+     * them as a day in 2001. Also, QBO commonly appends a Total/YTD
+     * column after the monthly columns. Build the calendar month labels
+     * from the requested report period and take only that many columns.
+     */
     const monthColumns = reportColumns
-      .map((column, index) => {
-        if (index === 0) {
-          return null;
-        }
-
-        const metadata =
-          Array.isArray(column?.MetaData)
-            ? column.MetaData
-            : [];
-
-        const columnKey = metadata.find(
-          item => item?.Name === 'ColKey'
-        )?.Value;
-
-        const title = String(
-          column?.ColTitle ||
-          columnKey ||
-          ''
-        ).trim();
-
-        const parsedKey = normaliseMonthKey(
-          columnKey || title
-        );
-
-        /*
-         * QuickBooks can label a partial current month as "Jul 22",
-         * meaning "July up to the 22nd". JavaScript otherwise parses
-         * that as 22 July 2001. Derive the month from the report start
-         * and the column position whenever the parsed year is implausible.
-         */
-        const startMonth = new Date(`${startDate}T00:00:00`);
-        const expectedMonth = new Date(
-          startMonth.getFullYear(),
-          startMonth.getMonth() + (index - 1),
+      .slice(1, 1 + expectedMonthCount)
+      .map((column, offset) => {
+        const index = offset + 1;
+        const monthDate = new Date(
+          reportStartMonth.getFullYear(),
+          reportStartMonth.getMonth() + offset,
           1
         );
-        const expectedKey =
-          `${expectedMonth.getFullYear()}-` +
-          String(expectedMonth.getMonth() + 1).padStart(2, '0');
-
-        const parsedYear = Number(parsedKey.slice(0, 4));
-        const startYear = startMonth.getFullYear();
-        const endYear = new Date(`${endDate}T00:00:00`).getFullYear();
         const key =
-          parsedKey && parsedYear >= startYear - 1 && parsedYear <= endYear + 1
-            ? parsedKey
-            : expectedKey;
-
-        const [keyYear, keyMonth] = key.split('-').map(Number);
-        const displayTitle = new Date(keyYear, keyMonth - 1, 1)
-          .toLocaleDateString('en-GB', {
-            month: 'short',
-            year: '2-digit'
-          });
+          `${monthDate.getFullYear()}-` +
+          String(monthDate.getMonth() + 1).padStart(2, '0');
 
         return {
           index,
-          title: displayTitle,
-          key
+          key,
+          title: monthDate.toLocaleDateString('en-GB', {
+            month: 'short',
+            year: '2-digit'
+          })
         };
-      })
-      .filter(
-        column =>
-          column &&
-          column.title
-      );
+      });
 
     function normaliseLabel(value) {
       return String(value || '')
@@ -681,27 +651,7 @@ apiRouter.get('/expenses', async (req, res) => {
       );
 
     const months =
-      monthColumns.map(column => {
-        const parsedDate =
-          new Date(column.title);
-
-        if (
-          !Number.isNaN(
-            parsedDate.getTime()
-          )
-        ) {
-          return parsedDate
-            .toLocaleDateString(
-              'en-GB',
-              {
-                month: 'short',
-                year: '2-digit'
-              }
-            );
-        }
-
-        return column.title;
-      });
+      monthColumns.map(column => column.title);
 
     res.json({
       months,

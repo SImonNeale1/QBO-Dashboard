@@ -908,9 +908,12 @@ apiRouter.get('/sales/category-debug', async (req, res) => {
     const lines = [];
 
     for (const invoice of selectedInvoices) {
-      const invoiceLines = extractInvoiceSalesItemLines(invoice);
+      const invoiceLines = Array.isArray(invoice.Line)
+        ? invoice.Line
+        : [];
 
       for (const line of invoiceLines) {
+        if (line.DetailType !== 'SalesItemLineDetail') continue;
 
         const itemRef = line.SalesItemLineDetail?.ItemRef || null;
         const itemId = String(itemRef?.value || '');
@@ -1042,6 +1045,17 @@ async function buildSalesAnalysis(
       item
     );
   }
+
+  /*
+   * The bulk Item query is not guaranteed to include every product/category
+   * referenced by historical transactions. Resolve all referenced Items and
+   * their ParentRef hierarchy directly before classification.
+   */
+  await hydrateReferencedItems(
+    qbo,
+    invoices,
+    itemIndex
+  );
 
   const currentDate =
     new Date();
@@ -1199,14 +1213,12 @@ async function buildSalesAnalysis(
     }
 
     const salesLines =
-      extractInvoiceSalesItemLines(invoice)
+      flattenInvoiceSalesLines(invoice.Line)
         .map(line => {
           const grossAmount =
             Math.max(
               0,
-              safeNum(
-                line.Amount
-              )
+              safeNum(line.Amount)
             );
 
           return {
@@ -1222,8 +1234,7 @@ async function buildSalesAnalysis(
         })
         .filter(
           line =>
-            line.grossAmount >
-            0
+            line.grossAmount > 0
         );
 
     const invoiceGross =
@@ -1396,62 +1407,6 @@ async function buildSalesAnalysis(
 }
 
 /**
- * Return every sales-item line on an invoice, including products nested inside
- * QuickBooks Group/Bundle lines.
- *
- * QBO represents a group as a GroupLineDetail containing its own Line array.
- * Reading only invoice.Line misses those products completely. If a group has
- * no usable child sales lines, retain the group itself as a synthetic sales
- * line so its GroupItemRef and amount can still be classified.
- */
-function extractInvoiceSalesItemLines(invoice) {
-  const results = [];
-
-  function visit(lines) {
-    for (const line of Array.isArray(lines) ? lines : []) {
-      if (line?.DetailType === 'SalesItemLineDetail') {
-        results.push(line);
-        continue;
-      }
-
-      const groupDetail = line?.GroupLineDetail;
-      const nestedLines = Array.isArray(groupDetail?.Line)
-        ? groupDetail.Line
-        : [];
-
-      if (
-        line?.DetailType === 'GroupLineDetail' ||
-        nestedLines.length > 0
-      ) {
-        const before = results.length;
-        visit(nestedLines);
-
-        const childValue = results
-          .slice(before)
-          .reduce(
-            (total, childLine) =>
-              total + Math.max(0, safeNum(childLine?.Amount)),
-            0
-          );
-
-        if (childValue <= 0 && groupDetail?.GroupItemRef?.value) {
-          results.push({
-            ...line,
-            DetailType: 'SalesItemLineDetail',
-            SalesItemLineDetail: {
-              ItemRef: groupDetail.GroupItemRef
-            }
-          });
-        }
-      }
-    }
-  }
-
-  visit(invoice?.Line);
-  return results;
-}
-
-/**
  * Read every available QuickBooks page.
  */
 async function qboQueryAllSalesRecords(
@@ -1520,6 +1475,104 @@ async function qboQueryAllItems(qbo) {
   }
 
   return Array.from(uniqueItems.values());
+}
+
+
+/**
+ * Return every valued SalesItemLineDetail, including products nested inside
+ * QuickBooks Group/Bundle lines. If child lines have no values, retain the
+ * group line so its own ItemRef and amount can still be classified.
+ */
+function flattenInvoiceSalesLines(lines = []) {
+  const results = [];
+
+  for (const line of Array.isArray(lines) ? lines : []) {
+    if (line?.DetailType === 'SalesItemLineDetail') {
+      results.push(line);
+      continue;
+    }
+
+    if (line?.DetailType !== 'GroupLineDetail') {
+      continue;
+    }
+
+    const children =
+      line?.GroupLineDetail?.Line ||
+      line?.GroupLineDetail?.line ||
+      [];
+
+    const nested = flattenInvoiceSalesLines(children);
+    const valuedNested = nested.filter(child => safeNum(child?.Amount) > 0);
+
+    if (valuedNested.length > 0) {
+      results.push(...valuedNested);
+      continue;
+    }
+
+    const groupItemRef = line?.GroupLineDetail?.GroupItemRef;
+    if (groupItemRef?.value && safeNum(line?.Amount) > 0) {
+      results.push({
+        ...line,
+        DetailType: 'SalesItemLineDetail',
+        SalesItemLineDetail: {
+          ItemRef: groupItemRef
+        }
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Directly retrieve transaction-referenced Items that the bulk Item query did
+ * not return, then walk and retrieve every missing ParentRef category. This is
+ * essential for historical/inactive products and category records in QBO.
+ */
+async function hydrateReferencedItems(qbo, invoices, itemIndex) {
+  const pending = [];
+  const queued = new Set();
+
+  const queueId = value => {
+    const id = String(value || '').trim();
+    if (!id || itemIndex.has(id) || queued.has(id)) return;
+    queued.add(id);
+    pending.push(id);
+  };
+
+  for (const invoice of invoices || []) {
+    for (const line of flattenInvoiceSalesLines(invoice?.Line)) {
+      queueId(line?.SalesItemLineDetail?.ItemRef?.value);
+    }
+  }
+
+  /* Also resolve missing parents of Items returned by the bulk query. */
+  for (const item of itemIndex.values()) {
+    queueId(item?.ParentRef?.value || item?.ParentRef);
+  }
+
+  while (pending.length > 0) {
+    const id = pending.shift();
+
+    try {
+      const response = await qboQuery(
+        qbo,
+        `SELECT * FROM Item WHERE Id = '${id}' MAXRESULTS 1`
+      );
+
+      const item = response?.QueryResponse?.Item?.[0];
+      if (!item) continue;
+
+      itemIndex.set(String(item.Id), item);
+      queueId(item?.ParentRef?.value || item?.ParentRef);
+    } catch (err) {
+      /* One inaccessible/deleted Item must not stop the complete dashboard. */
+      console.warn(
+        `Unable to resolve QuickBooks Item ${id}:`,
+        err?.response?.data || err?.message || err
+      );
+    }
+  }
 }
 
 /**

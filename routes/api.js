@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { readFileSync } from 'node:fs';
 import { qboReport, qboQuery } from '../lib/qbo.js';
 import {
   parsePL,
@@ -882,7 +883,7 @@ apiRouter.get(
         assignment: {
           basis: 'Invoice billing postcode',
           addressField: 'Invoice.BillAddr.PostalCode',
-          fallback: 'Derek receives postcode areas not listed for Andy or Sean',
+          fallback: 'Unrecognised or missing billing addresses fall back to Andy',
           territories: SALESPERSON_TERRITORIES
         },
         diagnostics: analysis.diagnostics
@@ -896,35 +897,61 @@ apiRouter.get(
 /**
  * Editable salesperson territory map.
  *
- * Postcode areas are the letters at the start of a UK postcode, for example:
- * BS1 4DJ -> BS, B12 8AA -> B, CF10 1AA -> CF.
- *
- * Wales is split by postcode area:
- * Andy = CF and NP; Sean = SA, LL and SY.
- * Any postcode area not listed for Andy or Sean is assigned to Derek.
+ * Amend salesperson-territories.json to move postcode areas between people.
+ * The JSON file must be kept in the same folder as this api.js file.
  */
-const SALESPERSON_TERRITORIES = {
-  Andy: {
-    region: 'South West · South East · Wales (CF, NP)',
-    postcodeAreas: [
-      'BA', 'BH', 'BN', 'BS', 'CF', 'CT', 'DA', 'DT', 'EX', 'GL',
-      'GU', 'ME', 'NP', 'OX', 'PL', 'PO', 'RG', 'RH', 'SN', 'SO',
-      'SP', 'TA', 'TN', 'TQ', 'TR'
-    ]
-  },
-  Sean: {
-    region: 'Midlands · Wales (SA, LL, SY)',
-    postcodeAreas: [
-      'B', 'CB', 'CV', 'DE', 'DY', 'HR', 'LE', 'LL', 'LN', 'LU',
-      'MK', 'NG', 'NN', 'NR', 'PE', 'SA', 'SG', 'ST', 'SY', 'TF',
-      'WR', 'WS', 'WV'
-    ]
-  },
-  Derek: {
-    region: 'North · Scotland · all remaining postcode areas',
-    postcodeAreas: []
+const SALESPERSON_TERRITORIES = loadSalespersonTerritories();
+
+function loadSalespersonTerritories() {
+  const configUrl = new URL(
+    './salesperson-territories.json',
+    import.meta.url
+  );
+
+  try {
+    const config = JSON.parse(
+      readFileSync(configUrl, 'utf8')
+    );
+
+    validateSalespersonTerritories(config);
+    return config;
+  } catch (err) {
+    throw new Error(
+      `Unable to load salesperson-territories.json: ${err.message}`
+    );
   }
-};
+}
+
+function validateSalespersonTerritories(config) {
+  const requiredPeople = ['Andy', 'Sean', 'Derek'];
+  const allocatedAreas = new Map();
+
+  for (const personName of requiredPeople) {
+    const territory = config?.[personName];
+
+    if (!territory || !Array.isArray(territory.postcodeAreas)) {
+      throw new Error(
+        `${personName} must have a postcodeAreas array`
+      );
+    }
+
+    territory.postcodeAreas = territory.postcodeAreas.map(area =>
+      String(area || '').trim().toUpperCase()
+    );
+
+    for (const area of territory.postcodeAreas) {
+      if (!area) continue;
+
+      if (allocatedAreas.has(area)) {
+        throw new Error(
+          `Postcode area ${area} is allocated to both ${allocatedAreas.get(area)} and ${personName}`
+        );
+      }
+
+      allocatedAreas.set(area, personName);
+    }
+  }
+}
 
 async function buildSalespersonAnalysis(qbo, year) {
   const startDate = `${year}-04-01`;
@@ -967,9 +994,10 @@ async function buildSalespersonAnalysis(qbo, year) {
   };
 
   for (const invoice of invoices) {
-    const postcode = String(invoice?.BillAddr?.PostalCode || '').trim();
+    const billingAddress = invoice?.BillAddr || {};
+    const postcode = String(billingAddress.PostalCode || '').trim();
     const postcodeArea = getUkPostcodeArea(postcode);
-    const personName = salespersonFromPostcodeArea(postcodeArea);
+    const personName = salespersonFromBillingAddress(billingAddress);
     const person = people.get(personName);
 
     if (!postcodeArea) {
@@ -1054,20 +1082,30 @@ function getUkPostcodeArea(postcode) {
   return match ? match[1] : '';
 }
 
-function salespersonFromPostcodeArea(postcodeArea) {
-  const area = String(postcodeArea || '').toUpperCase();
+function salespersonFromBillingAddress(address) {
+  const postcodeArea = getUkPostcodeArea(address?.PostalCode);
+  const country = String(address?.Country || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z]/g, '');
 
-  for (const personName of ['Andy', 'Sean']) {
-    if (
-      SALESPERSON_TERRITORIES[personName]
-        .postcodeAreas
-        .includes(area)
-    ) {
+  // Republic of Ireland uses Eircodes rather than UK postcode areas.
+  if (
+    ['IE', 'IRL', 'IRELAND', 'REPUBLICOFIRELAND', 'EIRE']
+      .includes(country)
+  ) {
+    return 'Andy';
+  }
+
+  for (const [personName, territory] of Object.entries(
+    SALESPERSON_TERRITORIES
+  )) {
+    if (territory.postcodeAreas.includes(postcodeArea)) {
       return personName;
     }
   }
 
-  return 'Derek';
+  return 'Andy';
 }
 
 /**

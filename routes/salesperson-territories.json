@@ -1,0 +1,30 @@
+{
+  "Andy": {
+    "region": "South West · South East · London · South Wales · Ireland · Isle of Man · Channel Islands",
+    "postcodeAreas": [
+      "BA", "BH", "BS", "DT", "EX", "GL", "PL", "SN", "SP", "TA", "TQ", "TR",
+      "AL", "BN", "BR", "CR", "CT", "DA", "E", "EC", "EN", "GU", "HA", "HP", "IG", "KT", "ME", "N", "NW", "OX", "PO", "RG", "RH", "RM", "SE", "SL", "SM", "SO", "SS", "SW", "TN", "TW", "UB", "W", "WC", "WD",
+      "CF", "NP", "SA",
+      "BT", "IM", "GY", "JE"
+    ]
+  },
+  "Sean": {
+    "region": "Midlands · East Anglia · Mid and North Wales",
+    "postcodeAreas": [
+      "B", "CV", "DY", "HR", "ST", "TF", "WR", "WS", "WV",
+      "DE", "LE", "LN", "NG", "NN",
+      "CB", "CM", "CO", "IP", "LU", "MK", "NR", "PE", "SG",
+      "LD", "LL", "SY"
+    ]
+  },
+  "Derek": {
+    "region": "North of England · Scotland · special postcode areas",
+    "postcodeAreas": [
+      "BB", "BL", "CA", "CH", "CW", "FY", "L", "LA", "M", "OL", "PR", "SK", "WA", "WN",
+      "BD", "DN", "HD", "HG", "HU", "HX", "LS", "S", "WF", "YO",
+      "DH", "DL", "NE", "SR", "TS",
+      "AB", "DD", "DG", "EH", "FK", "G", "HS", "IV", "KA", "KW", "KY", "ML", "PA", "PH", "TD", "ZE",
+      "BF", "BX", "GIR"
+    ]
+  }
+}

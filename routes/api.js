@@ -905,6 +905,11 @@ async function buildSalesAnalysis(
     );
   }
 
+  return {
+    debugItem: items[0]
+};
+
+ 
   const currentDate =
     new Date();
 

@@ -1447,13 +1447,7 @@ function classifySalesLine(
         ?.value || ''
     );
 
-  const className =
-    normaliseClassificationName(
-      getInvoiceLineClassName(
-        invoice,
-        line
-      )
-    );
+
   
   /*
    * Reseller:
@@ -1478,15 +1472,23 @@ function classifySalesLine(
    */
   if (
     itemHasCategory(
-      itemId,
-      itemIndex,
-      'Advantage'
-    ) &&
-    className ===
-      'advantage products'
-  ) {
+        itemId,
+        itemIndex,
+        'Rycote Sales'
+    )
+) {
+    return 'reseller';
+}
+
+if (
+    itemHasCategory(
+        itemId,
+        itemIndex,
+        'Advantage'
+    )
+) {
     return 'advantage';
-  }
+}
 
   return 'other';
 }

@@ -861,6 +861,145 @@ apiRouter.get(
 );
 
 /**
+ * Category classification diagnostics.
+ *
+ * GET /api/sales/category-debug?year=2026
+ * GET /api/sales/category-debug?year=2026&invoice=INV-1234
+ *
+ * This deliberately omits customer details. It returns the raw ItemRef from
+ * each invoice sales line, the referenced Item, every available parent Item,
+ * and the category-only classification decision.
+ */
+apiRouter.get('/sales/category-debug', async (req, res) => {
+  try {
+    if (!ensureQBO(req, res)) return;
+
+    const year = normaliseSalesYear(req.query.year);
+    const startDate = `${year}-04-01`;
+    const endDate = `${year + 1}-03-31`;
+    const invoiceFilter = String(req.query.invoice || '').trim();
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isInteger(requestedLimit)
+      ? Math.max(1, Math.min(requestedLimit, 2000))
+      : 500;
+
+    const [invoices, items] = await Promise.all([
+      qboQueryAllSalesRecords(
+        req.qbo,
+        'Invoice',
+        `WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`
+      ),
+      qboQueryAllItems(req.qbo)
+    ]);
+
+    const itemIndex = new Map();
+    for (const item of items) {
+      itemIndex.set(String(item.Id), item);
+    }
+
+    const selectedInvoices = invoiceFilter
+      ? invoices.filter(invoice =>
+          String(invoice.Id || '') === invoiceFilter ||
+          String(invoice.DocNumber || '').toLowerCase() ===
+            invoiceFilter.toLowerCase()
+        )
+      : invoices;
+
+    const lines = [];
+
+    for (const invoice of selectedInvoices) {
+      const invoiceLines = Array.isArray(invoice.Line)
+        ? invoice.Line
+        : [];
+
+      for (const line of invoiceLines) {
+        if (line.DetailType !== 'SalesItemLineDetail') continue;
+
+        const itemRef = line.SalesItemLineDetail?.ItemRef || null;
+        const itemId = String(itemRef?.value || '');
+        const rawItem = itemId ? itemIndex.get(itemId) || null : null;
+        const parentChain = buildItemParentChain(rawItem, itemIndex);
+        const classification = classifySalesLine(invoice, line, itemIndex);
+
+        lines.push({
+          invoice: {
+            id: invoice.Id || null,
+            docNumber: invoice.DocNumber || null,
+            txnDate: invoice.TxnDate || null
+          },
+          line: {
+            id: line.Id || null,
+            amount: safeNum(line.Amount),
+            description: line.Description || null,
+            itemRef
+          },
+          resolution: {
+            itemFound: Boolean(rawItem),
+            classification,
+            detectedCategoryPath: getItemCategoryPath(rawItem, itemIndex),
+            resellerMatch: itemHasCategory(
+              itemRef,
+              itemIndex,
+              'Rycote Sales'
+            ),
+            advantageMatch: itemHasCategory(
+              itemRef,
+              itemIndex,
+              'Advantage'
+            )
+          },
+          rawItem,
+          rawParentChain: parentChain
+        });
+
+        if (!invoiceFilter && lines.length >= limit) break;
+      }
+
+      if (!invoiceFilter && lines.length >= limit) break;
+    }
+
+    const counts = lines.reduce(
+      (result, entry) => {
+        result.total += 1;
+        result[entry.resolution.classification] += 1;
+        if (!entry.resolution.itemFound) result.unresolvedItems += 1;
+        return result;
+      },
+      {
+        total: 0,
+        reseller: 0,
+        advantage: 0,
+        other: 0,
+        unresolvedItems: 0
+      }
+    );
+
+    res.json({
+      generatedAt: new Date().toISOString(),
+      instructions: {
+        endpoint: '/api/sales/category-debug',
+        selectedFinancialYear: year,
+        dateRange: { startDate, endDate },
+        invoiceFilter: invoiceFilter || null,
+        note:
+          'Upload this JSON result. It excludes customer details but includes raw QuickBooks Item and parent-category records.'
+      },
+      sourceCounts: {
+        invoicesInFinancialYear: invoices.length,
+        selectedInvoices: selectedInvoices.length,
+        itemsLoaded: items.length
+      },
+      diagnosticCounts: counts,
+      truncated: !invoiceFilter && lines.length >= limit,
+      limit: invoiceFilter ? null : limit,
+      lines
+    });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+/**
  * Build the live sales analysis from QuickBooks invoices and items.
  */
 async function buildSalesAnalysis(
@@ -894,11 +1033,7 @@ async function buildSalesAnalysis(
        * products or categories, so both states are required for reliable
        * category classification.
        */
-      qboQueryAllSalesRecords(
-        qbo,
-        'Item',
-        'WHERE Active IN (true, false)'
-      )
+      qboQueryAllItems(qbo)
     ]);
 
   const itemIndex =
@@ -1322,6 +1457,88 @@ async function qboQueryAllSalesRecords(
   }
 
   return results;
+}
+
+/**
+ * Load active and inactive QuickBooks Items explicitly.
+ *
+ * QBO list queries can omit inactive records unless Active is filtered. Two
+ * separate queries are used because this is accepted more consistently than
+ * an IN expression across QBO query implementations.
+ */
+async function qboQueryAllItems(qbo) {
+  const [activeItems, inactiveItems] = await Promise.all([
+    qboQueryAllSalesRecords(qbo, 'Item', 'WHERE Active = true'),
+    qboQueryAllSalesRecords(qbo, 'Item', 'WHERE Active = false')
+  ]);
+
+  const uniqueItems = new Map();
+  for (const item of [...activeItems, ...inactiveItems]) {
+    uniqueItems.set(String(item.Id), item);
+  }
+
+  return Array.from(uniqueItems.values());
+}
+
+/**
+ * Return every available parent Item/category record for diagnostics.
+ */
+function buildItemParentChain(item, itemIndex) {
+  const chain = [];
+  const visited = new Set();
+  let current = item;
+
+  while (current?.ParentRef) {
+    const parentId = String(
+      current.ParentRef?.value || current.ParentRef || ''
+    );
+
+    if (!parentId || visited.has(parentId)) break;
+    visited.add(parentId);
+
+    const parentItem = itemIndex.get(parentId) || null;
+    chain.push({
+      parentRef: current.ParentRef,
+      parentItem
+    });
+
+    if (!parentItem) break;
+    current = parentItem;
+  }
+
+  return chain;
+}
+
+/**
+ * Build the category path available from an Item and its parent hierarchy.
+ */
+function getItemCategoryPath(item, itemIndex) {
+  if (!item) return [];
+
+  const path = [];
+  const visited = new Set();
+  let current = item;
+
+  while (current?.ParentRef) {
+    const parentId = String(
+      current.ParentRef?.value || current.ParentRef || ''
+    );
+    const parentName = String(current.ParentRef?.name || '').trim();
+
+    if (!parentId || visited.has(parentId)) break;
+    visited.add(parentId);
+
+    const parentItem = itemIndex.get(parentId) || null;
+    const resolvedName = String(
+      parentItem?.Name || parentItem?.FullyQualifiedName || parentName
+    ).trim();
+
+    if (resolvedName) path.unshift(resolvedName);
+    if (!parentItem) break;
+    current = parentItem;
+  }
+
+  return path;
 }
 
 /**

@@ -1455,7 +1455,10 @@ function classifySalesLine(
       )
     );
 
-console.log('CLASS=', className, 'ITEM=', itemIndex.get(itemId)?.FullyQualifiedName);
+return JSON.stringify({
+    className,
+    item: itemIndex.get(itemId)?.FullyQualifiedName
+});
   
   /*
    * Reseller:

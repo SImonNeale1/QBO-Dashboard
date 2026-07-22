@@ -694,9 +694,10 @@ apiRouter.get('/expenses', async (req, res) => {
  * Sales dashboard
  *
  * Classification priority for each invoice line:
- * 1. Reseller = item category "RYCOTE Products" (legacy alias: "Rycote Sales")
- * 2. Advantage = item category "Advantage"
- * 3. Everything else = Other
+ * 1. Invoice class: CGL = Reseller; Advantage Products = Advantage
+ * 2. Line class, when the invoice class is blank
+ * 3. Stock-item category fallback: RYCOTE Products = Reseller; Advantage = Advantage
+ * 4. Everything else = Other
  *
  * Reseller sales are excluded from discount calculations.
  */
@@ -750,15 +751,18 @@ apiRouter.get('/sales/monthly', async (req, res) => {
         : {}),
 
       classificationRules: {
-        basis: 'Item Category',
+        basis: 'Invoice class, then line class, then stock-item category fallback',
 
         reseller: {
-          category: 'RYCOTE Products',
-          legacyCategory: 'Rycote Sales'
+          invoiceClass: 'CGL',
+          lineClass: 'CGL',
+          fallbackCategory: 'RYCOTE Products'
         },
 
         advantage: {
-          category: 'Advantage'
+          invoiceClass: 'Advantage Products',
+          lineClass: 'Advantage Products',
+          fallbackCategory: 'Advantage'
         }
       }
     });
@@ -837,9 +841,9 @@ apiRouter.get(
         combined,
 
         excludedFromDiscountCalculations: {
-          basis: 'Item Category',
-          category: 'RYCOTE Products',
-          legacyCategory: 'Rycote Sales'
+          classification: 'reseller',
+          primaryClass: 'CGL',
+          fallbackCategory: 'RYCOTE Products'
         }
       });
     } catch (err) {
@@ -886,7 +890,7 @@ apiRouter.get(
  *
  * This deliberately omits customer details. It returns the raw ItemRef from
  * each invoice sales line, the referenced Item, every available parent Item,
- * and the category-only classification decision.
+ * and the class-first classification decision with category fallback.
  */
 apiRouter.get('/sales/category-debug', async (req, res) => {
   try {
@@ -926,12 +930,12 @@ apiRouter.get('/sales/category-debug', async (req, res) => {
     const lines = [];
 
     for (const invoice of selectedInvoices) {
-      const invoiceLines = Array.isArray(invoice.Line)
-        ? invoice.Line
-        : [];
+      const invoiceLines =
+        flattenInvoiceSalesLines(
+          invoice.Line
+        );
 
       for (const line of invoiceLines) {
-        if (line.DetailType !== 'SalesItemLineDetail') continue;
 
         const itemRef = line.SalesItemLineDetail?.ItemRef || null;
         const itemId = String(itemRef?.value || '');
@@ -943,13 +947,18 @@ apiRouter.get('/sales/category-debug', async (req, res) => {
           invoice: {
             id: invoice.Id || null,
             docNumber: invoice.DocNumber || null,
-            txnDate: invoice.TxnDate || null
+            txnDate: invoice.TxnDate || null,
+            classRef: invoice.ClassRef || null
           },
           line: {
             id: line.Id || null,
             amount: safeNum(line.Amount),
             description: line.Description || null,
-            itemRef
+            itemRef,
+            classRef:
+              line.SalesItemLineDetail?.ClassRef ||
+              line.ClassRef ||
+              null
           },
           resolution: {
             itemFound: Boolean(rawItem),
@@ -959,10 +968,6 @@ apiRouter.get('/sales/category-debug', async (req, res) => {
               itemRef,
               itemIndex,
               'RYCOTE Products'
-            ) || itemHasCategory(
-              itemRef,
-              itemIndex,
-              'Rycote Sales'
             ),
             advantageMatch: itemHasCategory(
               itemRef,
@@ -1020,6 +1025,319 @@ apiRouter.get('/sales/category-debug', async (req, res) => {
     handleError(res, err);
   }
 });
+
+/**
+ * Full downloadable sales-classification audit.
+ *
+ * JSON:
+ *   GET /api/sales/audit?year=2026
+ * CSV for Excel:
+ *   GET /api/sales/audit.csv?year=2026
+ *
+ * Optional single-invoice filter:
+ *   ?invoice=2937
+ */
+apiRouter.get('/sales/audit', async (req, res) => {
+  try {
+    if (!ensureQBO(req, res)) return;
+
+    const audit = await buildFullSalesAudit(
+      req.qbo,
+      normaliseSalesYear(req.query.year),
+      String(req.query.invoice || '').trim()
+    );
+
+    const filename = audit.invoiceFilter
+      ? `sales-audit-${audit.year}-invoice-${safeFilename(audit.invoiceFilter)}.json`
+      : `sales-audit-${audit.year}.json`;
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${filename}"`
+    );
+    res.send(JSON.stringify(audit, null, 2));
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+apiRouter.get('/sales/audit.csv', async (req, res) => {
+  try {
+    if (!ensureQBO(req, res)) return;
+
+    const audit = await buildFullSalesAudit(
+      req.qbo,
+      normaliseSalesYear(req.query.year),
+      String(req.query.invoice || '').trim()
+    );
+
+    const columns = [
+      'invoiceNumber',
+      'invoiceId',
+      'invoiceDate',
+      'customer',
+      'invoiceClass',
+      'lineId',
+      'lineClass',
+      'itemId',
+      'itemName',
+      'description',
+      'grossAmount',
+      'itemClass',
+      'itemCategory',
+      'categoryPath',
+      'classification',
+      'classificationReason',
+      'insideGroup',
+      'parentGroup',
+      'itemFound'
+    ];
+
+    const csvRows = [
+      columns.join(','),
+      ...audit.lines.map(row =>
+        columns.map(column => csvValue(row[column])).join(',')
+      )
+    ];
+
+    const filename = audit.invoiceFilter
+      ? `sales-audit-${audit.year}-invoice-${safeFilename(audit.invoiceFilter)}.csv`
+      : `sales-audit-${audit.year}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${filename}"`
+    );
+
+    // UTF-8 BOM helps Excel open names and descriptions correctly.
+    res.send(`\uFEFF${csvRows.join('\r\n')}`);
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+async function buildFullSalesAudit(qbo, year, invoiceFilter = '') {
+  const startDate = `${year}-04-01`;
+  const endDate = `${year + 1}-03-31`;
+
+  const [invoices, items] = await Promise.all([
+    qboQueryAllSalesRecords(
+      qbo,
+      'Invoice',
+      `WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`
+    ),
+    qboQueryAllItems(qbo)
+  ]);
+
+  const itemIndex = new Map();
+  for (const item of items) {
+    itemIndex.set(String(item.Id), item);
+  }
+
+  const selectedInvoices = invoiceFilter
+    ? invoices.filter(invoice =>
+        String(invoice.Id || '') === invoiceFilter ||
+        String(invoice.DocNumber || '').toLowerCase() ===
+          invoiceFilter.toLowerCase()
+      )
+    : invoices;
+
+  const lines = [];
+
+  for (const invoice of selectedInvoices) {
+    const invoiceClass = getRefName(invoice.ClassRef);
+    const customer = getRefName(invoice.CustomerRef);
+    const invoiceLines = flattenInvoiceSalesLinesWithContext(invoice.Line);
+
+    for (const entry of invoiceLines) {
+      const line = entry.line;
+      const detail = line.SalesItemLineDetail || {};
+      const itemRef = detail.ItemRef || null;
+      const itemId = String(itemRef?.value || '');
+      const item = itemId ? itemIndex.get(itemId) || null : null;
+      const lineClass = getRefName(detail.ClassRef || line.ClassRef);
+      const itemClass = getRefName(item?.ClassRef);
+      const categoryPath = getItemCategoryPath(item, itemIndex);
+      const classification = classifySalesLine(invoice, line, itemIndex);
+      const classificationReason = getSalesClassificationReason(
+        invoice,
+        line,
+        itemIndex
+      );
+
+      lines.push({
+        invoiceNumber: invoice.DocNumber || '',
+        invoiceId: invoice.Id || '',
+        invoiceDate: invoice.TxnDate || '',
+        customer,
+        invoiceClass,
+        lineId: line.Id || '',
+        lineClass,
+        itemId,
+        itemName:
+          getRefName(itemRef) ||
+          item?.FullyQualifiedName ||
+          item?.Name ||
+          '',
+        description: line.Description || '',
+        grossAmount: safeNum(line.Amount),
+        itemClass,
+        itemCategory: categoryPath[0] || '',
+        categoryPath: categoryPath.join(' > '),
+        classification,
+        classificationReason,
+        insideGroup: entry.insideGroup ? 'Yes' : 'No',
+        parentGroup: entry.parentGroup || '',
+        itemFound: item ? 'Yes' : 'No'
+      });
+    }
+  }
+
+  const summary = lines.reduce(
+    (result, line) => {
+      result.salesLines += 1;
+      result.grossValue += line.grossAmount;
+      result[line.classification].count += 1;
+      result[line.classification].grossValue += line.grossAmount;
+      if (line.itemFound === 'No') result.unresolvedItems += 1;
+      if (line.insideGroup === 'Yes') result.groupedLines += 1;
+      return result;
+    },
+    {
+      invoices: selectedInvoices.length,
+      salesLines: 0,
+      grossValue: 0,
+      groupedLines: 0,
+      unresolvedItems: 0,
+      reseller: { count: 0, grossValue: 0 },
+      advantage: { count: 0, grossValue: 0 },
+      other: { count: 0, grossValue: 0 }
+    }
+  );
+
+  return {
+    generatedAt: new Date().toISOString(),
+    year,
+    financialYear: { startDate, endDate },
+    invoiceFilter: invoiceFilter || null,
+    classificationPriority: [
+      'Invoice class CGL = reseller',
+      'Invoice class Advantage Products = advantage',
+      'Line class CGL = reseller when invoice class is blank',
+      'Line class Advantage Products = advantage when invoice class is blank',
+      'Stock-item category RYCOTE Products = reseller fallback',
+      'Stock-item category Advantage = advantage fallback',
+      'Otherwise = other'
+    ],
+    sourceCounts: {
+      invoicesInFinancialYear: invoices.length,
+      selectedInvoices: selectedInvoices.length,
+      itemsLoaded: items.length
+    },
+    summary,
+    lines
+  };
+}
+
+function flattenInvoiceSalesLinesWithContext(
+  lines = [],
+  insideGroup = false,
+  parentGroup = ''
+) {
+  const result = [];
+
+  for (const line of Array.isArray(lines) ? lines : []) {
+    if (line?.DetailType === 'SalesItemLineDetail') {
+      result.push({ line, insideGroup, parentGroup });
+    }
+
+    const nestedLines = line?.GroupLineDetail?.Line;
+    if (Array.isArray(nestedLines)) {
+      const groupName =
+        getRefName(line.GroupLineDetail?.GroupItemRef) ||
+        line.Description ||
+        line.Id ||
+        'QuickBooks group';
+
+      result.push(
+        ...flattenInvoiceSalesLinesWithContext(
+          nestedLines,
+          true,
+          groupName
+        )
+      );
+    }
+  }
+
+  return result;
+}
+
+function getSalesClassificationReason(invoice, line, itemIndex) {
+  const detail = line?.SalesItemLineDetail || {};
+  const invoiceClass = normaliseClassificationName(
+    getRefName(invoice?.ClassRef)
+  );
+  const lineClass = normaliseClassificationName(
+    getRefName(detail.ClassRef || line?.ClassRef)
+  );
+
+  if (invoiceClass === normaliseClassificationName('CGL')) {
+    return 'Invoice class = CGL';
+  }
+  if (
+    invoiceClass === normaliseClassificationName('Advantage Products')
+  ) {
+    return 'Invoice class = Advantage Products';
+  }
+  if (!invoiceClass && lineClass === normaliseClassificationName('CGL')) {
+    return 'Line class = CGL';
+  }
+  if (
+    !invoiceClass &&
+    lineClass === normaliseClassificationName('Advantage Products')
+  ) {
+    return 'Line class = Advantage Products';
+  }
+
+  const itemRef = detail.ItemRef;
+  if (
+    itemHasCategory(itemRef, itemIndex, 'RYCOTE Products')
+  ) {
+    return 'Stock-item category = RYCOTE Products fallback';
+  }
+  if (itemHasCategory(itemRef, itemIndex, 'Advantage')) {
+    return 'Stock-item category = Advantage fallback';
+  }
+
+  if (invoiceClass) {
+    return `Unmapped invoice class = ${getRefName(invoice?.ClassRef)}`;
+  }
+  if (lineClass) {
+    return `Unmapped line class = ${getRefName(detail.ClassRef || line?.ClassRef)}`;
+  }
+  return 'No matching class or stock-item category';
+}
+
+function getRefName(ref) {
+  if (!ref) return '';
+  if (typeof ref === 'string') return ref.trim();
+  return String(ref.name || ref.Name || '').trim();
+}
+
+function csvValue(value) {
+  const text = value === null || value === undefined
+    ? ''
+    : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function safeFilename(value) {
+  return String(value || '')
+    .replace(/[^a-z0-9._-]+/gi, '-')
+    .replace(/^-+|-+$/g, '') || 'invoice';
+}
 
 /**
  * Trace one real QuickBooks invoice through the same item-category
@@ -1082,15 +1400,16 @@ async function traceInvoiceForSalesClassification(
           amount: safeNum(line.Amount),
           description: line.Description || null,
           itemRef,
+          invoiceClassRef: invoice.ClassRef || null,
+          lineClassRef:
+            line.SalesItemLineDetail?.ClassRef ||
+            line.ClassRef ||
+            null,
           classification: classifySalesLine(invoice, line, itemIndex),
           resellerMatch: itemHasCategory(
             itemRef,
             itemIndex,
             'RYCOTE Products'
-          ) || itemHasCategory(
-            itemRef,
-            itemIndex,
-            'Rycote Sales'
           ),
           advantageMatch: itemHasCategory(
             itemRef,
@@ -1143,12 +1462,37 @@ async function traceInvoiceForSalesClassification(
       Id: invoice.Id,
       DocNumber: invoice.DocNumber,
       TxnDate: invoice.TxnDate,
-      TotalAmt: invoice.TotalAmt
+      TotalAmt: invoice.TotalAmt,
+      ClassRef: invoice.ClassRef || null
     },
     itemsLoaded: items.length,
     tracedLineCount: tracedLines.length,
     lines: tracedLines
   };
+}
+
+/**
+ * Return every SalesItemLineDetail, including lines nested inside QBO groups.
+ */
+function flattenInvoiceSalesLines(lines = []) {
+  const result = [];
+
+  for (const line of Array.isArray(lines) ? lines : []) {
+    if (line?.DetailType === 'SalesItemLineDetail') {
+      result.push(line);
+    }
+
+    const nestedLines =
+      line?.GroupLineDetail?.Line;
+
+    if (Array.isArray(nestedLines)) {
+      result.push(
+        ...flattenInvoiceSalesLines(nestedLines)
+      );
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -1354,18 +1698,9 @@ async function buildSalesAnalysis(
     }
 
     const salesLines =
-      (
-        Array.isArray(
-          invoice.Line
-        )
-          ? invoice.Line
-          : []
+      flattenInvoiceSalesLines(
+        invoice.Line
       )
-        .filter(
-          line =>
-            line.DetailType ===
-            'SalesItemLineDetail'
-        )
         .map(line => {
           const grossAmount =
             Math.max(
@@ -1852,7 +2187,11 @@ function itemHasCategory(
 }
 
 /**
- * Classify one invoice sales line using Item Category only.
+ * Classify one invoice sales line.
+ *
+ * Business rule priority:
+ * 1. Class recorded on the invoice or invoice line.
+ * 2. Stock-item category only as a fallback for older/incomplete records.
  */
 function classifySalesLine(
   invoice,
@@ -1865,54 +2204,59 @@ function classifySalesLine(
   const itemRef =
     detail.ItemRef;
 
-  /*
-   * QuickBooks can store Class either on each sales line or on the whole
-   * invoice, depending on the company class-tracking configuration.
-   */
-  const className =
+  const invoiceClassName =
     normaliseClassificationName(
-      detail.ClassRef?.name ||
-      line?.ClassRef?.name ||
       invoice?.ClassRef?.name ||
+      invoice?.ClassRef?.Name ||
       ''
     );
 
-  /*
-   * Reseller products are Item Category "RYCOTE Products" (legacy alias "Rycote Sales") and Class "CGL".
-   * Use either field because historical QBO invoice lines do not always expose
-   * enough Item hierarchy data to reconstruct the category reliably.
-   */
+  const lineClassName =
+    normaliseClassificationName(
+      detail.ClassRef?.name ||
+      detail.ClassRef?.Name ||
+      line?.ClassRef?.name ||
+      line?.ClassRef?.Name ||
+      ''
+    );
+
+  // Prefer the class explicitly applied to the invoice.
+  const className =
+    invoiceClassName || lineClassName;
+
   if (
-    itemHasCategory(
-      itemRef,
-      itemIndex,
-      'RYCOTE Products'
-    ) ||
-    itemHasCategory(
-      itemRef,
-      itemIndex,
-      'Rycote Sales'
-    ) ||
     className ===
       normaliseClassificationName('CGL')
   ) {
     return 'reseller';
   }
 
-  /*
-   * Advantage products are Item Category "Advantage" and Class
-   * "Advantage Products". Keep category support and add the class fallback.
-   */
+  if (
+    className ===
+      normaliseClassificationName(
+        'Advantage Products'
+      )
+  ) {
+    return 'advantage';
+  }
+
+  // Fallback for historical transactions where QBO does not return ClassRef.
+  if (
+    itemHasCategory(
+      itemRef,
+      itemIndex,
+      'RYCOTE Products'
+    )
+  ) {
+    return 'reseller';
+  }
+
   if (
     itemHasCategory(
       itemRef,
       itemIndex,
       'Advantage'
-    ) ||
-    className ===
-      normaliseClassificationName(
-        'Advantage Products'
-      )
+    )
   ) {
     return 'advantage';
   }

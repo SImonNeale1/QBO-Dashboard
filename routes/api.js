@@ -813,24 +813,39 @@ apiRouter.get('/sales/salesperson', async (req, res) => {
 /**
  * Build the live sales analysis from QuickBooks invoices and items.
  */
-async function buildSalesAnalysis(qbo, year) {
-  const startDate = `${year}-01-01`;
-  const endDate = `${year}-12-31`;
+async function buildSalesAnalysis(
+  qbo,
+  year
+) {
+  /*
+   * The selected year is the financial-year
+   * starting year.
+   *
+   * Example:
+   * 2026 = 1 April 2026 to 31 March 2027
+   */
+  const startDate =
+    `${year}-04-01`;
 
-  const [invoices, items] = await Promise.all([
-    qboQueryAllSalesRecords(
-      qbo,
-      'Invoice',
-      `WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`
-    ),
+  const endDate =
+    `${year + 1}-03-31`;
 
-    qboQueryAllSalesRecords(
-      qbo,
-      'Item'
-    )
-  ]);
+  const [invoices, items] =
+    await Promise.all([
+      qboQueryAllSalesRecords(
+        qbo,
+        'Invoice',
+        `WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`
+      ),
 
-  const itemIndex = new Map();
+      qboQueryAllSalesRecords(
+        qbo,
+        'Item'
+      )
+    ]);
+
+  const itemIndex =
+    new Map();
 
   for (const item of items) {
     itemIndex.set(
@@ -839,131 +854,264 @@ async function buildSalesAnalysis(qbo, year) {
     );
   }
 
-  const currentDate = new Date();
-  const currentYear = currentDate.getFullYear();
+  const currentDate =
+    new Date();
 
-  const monthCount =
-    year < currentYear
-      ? 12
-      : Math.min(
-          currentDate.getMonth() + 1,
-          12
-        );
-
-  const months = Array.from(
-    { length: monthCount },
-    (_, monthIndex) => ({
-      month: monthIndex + 1,
-
-      label: new Date(
-        year,
-        monthIndex,
-        1
-      ).toLocaleDateString('en-GB', {
-        month: 'short'
-      }),
-
-      advantageSales: 0,
-      resellerSales: 0,
-      otherSales: 0,
-      totalSales: 0,
-
-      ytdAdvantage: 0,
-      ytdReseller: 0,
-      ytdOther: 0,
-      ytdTotal: 0,
-
-      advDiscountPct: 0,
-      otherDiscountPct: 0,
-
-      _advantageGross: 0,
-      _advantageDiscount: 0,
-      _otherGross: 0,
-      _otherDiscount: 0
-    })
-  );
-
-  for (const invoice of invoices) {
-    const invoiceDate = parseQuickBooksDate(
-      invoice.TxnDate
+  const financialYearStart =
+    new Date(
+      year,
+      3,
+      1
     );
 
-    if (!invoiceDate) continue;
+  const financialYearEnd =
+    new Date(
+      year + 1,
+      2,
+      31
+    );
+
+  let monthCount = 12;
+
+  /*
+   * For the current financial year, only
+   * display months reached so far.
+   *
+   * July therefore shows:
+   * April, May, June and July.
+   */
+  if (
+    currentDate >=
+      financialYearStart &&
+    currentDate <=
+      financialYearEnd
+  ) {
+    monthCount =
+      (
+        currentDate.getFullYear() -
+        financialYearStart.getFullYear()
+      ) * 12 +
+      (
+        currentDate.getMonth() -
+        financialYearStart.getMonth()
+      ) +
+      1;
+  } else if (
+    currentDate <
+    financialYearStart
+  ) {
+    monthCount = 0;
+  }
+
+  monthCount =
+    Math.max(
+      0,
+      Math.min(
+        monthCount,
+        12
+      )
+    );
+
+  const months =
+    Array.from(
+      {
+        length: monthCount
+      },
+      (
+        _,
+        financialMonthIndex
+      ) => {
+        const monthDate =
+          new Date(
+            year,
+            3 +
+              financialMonthIndex,
+            1
+          );
+
+        return {
+          /*
+           * Calendar month number:
+           * April = 4, January = 1.
+           */
+          month:
+            monthDate.getMonth() +
+            1,
+
+          year:
+            monthDate.getFullYear(),
+
+          label:
+            monthDate
+              .toLocaleDateString(
+                'en-GB',
+                {
+                  month: 'short'
+                }
+              ),
+
+          advantageSales: 0,
+          resellerSales: 0,
+          otherSales: 0,
+          totalSales: 0,
+
+          ytdAdvantage: 0,
+          ytdReseller: 0,
+          ytdOther: 0,
+          ytdTotal: 0,
+
+          advDiscountPct: 0,
+          otherDiscountPct: 0,
+
+          _advantageGross: 0,
+          _advantageDiscount: 0,
+          _otherGross: 0,
+          _otherDiscount: 0
+        };
+      }
+    );
+
+  for (
+    const invoice of invoices
+  ) {
+    const invoiceDate =
+      parseQuickBooksDate(
+        invoice.TxnDate
+      );
+
+    if (!invoiceDate) {
+      continue;
+    }
 
     if (
-      invoiceDate.getFullYear() !== year
+      invoiceDate <
+        financialYearStart ||
+      invoiceDate >
+        financialYearEnd
     ) {
       continue;
     }
 
+    /*
+     * Convert calendar month into
+     * financial-year month index:
+     *
+     * April = 0
+     * May   = 1
+     * ...
+     * March = 11
+     */
+    const financialMonthIndex =
+      (
+        invoiceDate.getFullYear() -
+        year
+      ) * 12 +
+      invoiceDate.getMonth() -
+      3;
+
     const month =
-      months[invoiceDate.getMonth()];
+      months[
+        financialMonthIndex
+      ];
 
-    if (!month) continue;
+    /*
+     * This excludes future months from
+     * the current financial-year display.
+     */
+    if (!month) {
+      continue;
+    }
 
-    const customerName = String(
-      invoice.CustomerRef?.name || ''
-    ).trim();
+    const customerName =
+      String(
+        invoice
+          .CustomerRef
+          ?.name || ''
+      ).trim();
 
     const isReseller =
       RESELLER_CUSTOMERS.has(
-        customerName.toLowerCase()
+        customerName
+          .toLowerCase()
       );
 
-    const salesLines = (
-      Array.isArray(invoice.Line)
-        ? invoice.Line
-        : []
-    )
-      .filter(
-        line =>
-          line.DetailType ===
-          'SalesItemLineDetail'
+    const salesLines =
+      (
+        Array.isArray(
+          invoice.Line
+        )
+          ? invoice.Line
+          : []
       )
-      .map(line => {
-        const grossAmount = Math.max(
-          0,
-          safeNum(line.Amount)
+        .filter(
+          line =>
+            line.DetailType ===
+            'SalesItemLineDetail'
+        )
+        .map(line => {
+          const grossAmount =
+            Math.max(
+              0,
+              safeNum(
+                line.Amount
+              )
+            );
+
+          const itemId =
+            String(
+              line
+                .SalesItemLineDetail
+                ?.ItemRef
+                ?.value || ''
+            );
+
+          return {
+            grossAmount,
+
+            productGroup:
+              isAdvantageStockItem(
+                itemId,
+                itemIndex
+              )
+                ? 'advantage'
+                : 'other'
+          };
+        })
+        .filter(
+          line =>
+            line.grossAmount >
+            0
         );
-
-        const itemId = String(
-          line
-            .SalesItemLineDetail
-            ?.ItemRef
-            ?.value || ''
-        );
-
-        return {
-          grossAmount,
-
-          productGroup:
-            isAdvantageStockItem(
-              itemId,
-              itemIndex
-            )
-              ? 'advantage'
-              : 'other'
-        };
-      })
-      .filter(
-        line => line.grossAmount > 0
-      );
 
     const invoiceGross =
       salesLines.reduce(
-        (total, line) =>
-          total + line.grossAmount,
+        (
+          total,
+          line
+        ) =>
+          total +
+          line.grossAmount,
         0
       );
 
-    if (invoiceGross <= 0) continue;
+    if (
+      invoiceGross <= 0
+    ) {
+      continue;
+    }
 
-    const invoiceDiscount = Math.min(
-      getQuickBooksInvoiceDiscount(invoice),
-      invoiceGross
-    );
+    const invoiceDiscount =
+      Math.min(
+        getQuickBooksInvoiceDiscount(
+          invoice
+        ),
+        invoiceGross
+      );
 
-    for (const line of salesLines) {
+    for (
+      const line of
+        salesLines
+    ) {
       const allocatedDiscount =
         invoiceDiscount *
         (
@@ -971,20 +1119,21 @@ async function buildSalesAnalysis(qbo, year) {
           invoiceGross
         );
 
-      const netSales = Math.max(
-        0,
-        line.grossAmount -
-          allocatedDiscount
-      );
+      const netSales =
+        Math.max(
+          0,
+          line.grossAmount -
+            allocatedDiscount
+        );
 
       /*
-       * Reseller takes priority over product category.
-       *
-       * An Advantage product sold to a reseller appears only
-       * in the Reseller Sales column.
+       * Reseller classification takes
+       * priority over product category.
        */
       if (isReseller) {
-        month.resellerSales += netSales;
+        month.resellerSales +=
+          netSales;
+
         continue;
       }
 
@@ -1024,7 +1173,9 @@ async function buildSalesAnalysis(qbo, year) {
     otherDiscount: 0
   };
 
-  for (const month of months) {
+  for (
+    const month of months
+  ) {
     month.totalSales =
       month.advantageSales +
       month.resellerSales +
@@ -1077,18 +1228,26 @@ async function buildSalesAnalysis(qbo, year) {
     totals.otherDiscount +=
       month._otherDiscount;
 
-    delete month._advantageGross;
-    delete month._advantageDiscount;
-    delete month._otherGross;
-    delete month._otherDiscount;
+    delete month
+      ._advantageGross;
+
+    delete month
+      ._advantageDiscount;
+
+    delete month
+      ._otherGross;
+
+    delete month
+      ._otherDiscount;
   }
 
   return {
     months,
-    totals
+    totals,
+    startDate,
+    endDate
   };
 }
-
 /**
  * Read every available QuickBooks page.
  */

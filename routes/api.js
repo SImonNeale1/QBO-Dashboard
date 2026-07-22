@@ -1454,11 +1454,6 @@ function classifySalesLine(
         line
       )
     );
-
-return JSON.stringify({
-    className,
-    item: itemIndex.get(itemId)?.FullyQualifiedName
-});
   
   /*
    * Reseller:

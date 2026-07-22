@@ -263,7 +263,6 @@
             <input class="target-input" type="number" id="bonus-target" value="10" min="0" max="100" step="0.5">
             <span>% max</span>
           </div>
-          <button class="logout-btn" id="download-debug-btn" type="button">Download invoice 2937 JSON</button>
           <select class="year-select" id="sales-year"></select>
         </div>
       </div>
@@ -788,65 +787,6 @@ function initialiseSalesControls() {
 
 
 // ── API ────────────────────────────────────────────────────────────────────
-
-async function downloadInvoice2937Debug() {
-  const button = document.getElementById('download-debug-btn');
-  const year = document.getElementById('sales-year')?.value || new Date().getFullYear();
-
-  if (button) {
-    button.disabled = true;
-    button.textContent = 'Preparing JSON...';
-  }
-
-  try {
-    const response = await fetch(
-      `/api/sales/monthly?year=${encodeURIComponent(year)}&debugInvoice=2937`,
-      {
-        headers: {
-          'x-auth-token': getToken() || ''
-        }
-      }
-    );
-
-    if (response.status === 401) {
-      clearToken();
-      showLogin();
-      throw new Error('Your dashboard login has expired. Sign in again.');
-    }
-
-    if (!response.ok) {
-      throw new Error(`Debug request failed (${response.status})`);
-    }
-
-    const data = await response.json();
-    const output = data.debugInvoice || data;
-    const blob = new Blob(
-      [JSON.stringify(output, null, 2)],
-      { type: 'application/json' }
-    );
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'invoice-2937-debug.json';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-  } catch (error) {
-    console.error('Invoice 2937 debug download failed:', error);
-    alert(error.message || 'Could not download the JSON file.');
-  } finally {
-    if (button) {
-      button.disabled = false;
-      button.textContent = 'Download invoice 2937 JSON';
-    }
-  }
-}
-
-document
-  .getElementById('download-debug-btn')
-  ?.addEventListener('click', downloadInvoice2937Debug);
-
 
 async function apiFetch(path) {
   try {
@@ -1493,7 +1433,14 @@ function buildDiscountChart(
 // ── Salesperson cards ──────────────────────────────────────────────────────
 
 function renderPersonCards() {
-  if (!salespersonData) return;
+  if (!salespersonData) {
+    return;
+  }
+
+  const container =
+    document.getElementById(
+      'person-cards'
+    );
 
   if (
     !Array.isArray(
@@ -1501,9 +1448,7 @@ function renderPersonCards() {
     ) ||
     salespersonData.salespeople.length === 0
   ) {
-    document.getElementById(
-      'person-cards'
-    ).innerHTML = `
+    container.innerHTML = `
       <div
         class="loading"
         style="grid-column:1/-1"
@@ -1520,10 +1465,225 @@ function renderPersonCards() {
   const target =
     getBonusTarget();
 
-  // Keep the remainder of the existing
-  // renderPersonCards function here.
+  const regions = {
+    Andy:
+      'South West · South East · Wales (50%)',
 
+    Sean:
+      'Midlands · Wales (50%)',
 
+    Derek:
+      'North · Scotland'
+  };
+
+  container.innerHTML =
+    salespersonData.salespeople
+      .map(person => {
+        const advantageSales =
+          safeNumber(
+            person?.advantage?.sales
+          );
+
+        const advantageDiscount =
+          safeNumber(
+            person
+              ?.advantage
+              ?.discountPct
+          );
+
+        const otherSales =
+          safeNumber(
+            person?.other?.sales
+          );
+
+        const otherDiscount =
+          safeNumber(
+            person
+              ?.other
+              ?.discountPct
+          );
+
+        const overallDiscount =
+          safeNumber(
+            person
+              ?.overall
+              ?.discountPct
+          );
+
+        const onBonus =
+          overallDiscount <= target;
+
+        const barPercent =
+          target > 0
+            ? Math.min(
+                (
+                  overallDiscount /
+                  (target * 1.5)
+                ) * 100,
+                100
+              )
+            : 0;
+
+        const barClass =
+          overallDiscount <= target
+            ? 'good'
+            : overallDiscount <=
+                target * 1.2
+              ? 'warn'
+              : 'bad';
+
+        return `
+          <div class="person-card">
+
+            <div class="person-name">
+              ${person.person || ''}
+            </div>
+
+            <div class="person-region">
+              ${
+                regions[
+                  person.person
+                ] || ''
+              }
+            </div>
+
+            <div class="person-stat">
+              <span
+                style="color:var(--muted)"
+              >
+                Advantage sales
+              </span>
+
+              <span>
+                ${fmt(
+                  advantageSales
+                )}
+              </span>
+            </div>
+
+            <div class="person-stat">
+              <span
+                style="color:var(--muted)"
+              >
+                Advantage disc %
+              </span>
+
+              <span
+                style="color:${
+                  advantageDiscount >
+                  target
+                    ? 'var(--red)'
+                    : 'var(--green)'
+                }"
+              >
+                ${
+                  advantageDiscount
+                    .toFixed(1)
+                }%
+              </span>
+            </div>
+
+            <div class="person-stat">
+              <span
+                style="color:var(--muted)"
+              >
+                Other sales
+              </span>
+
+              <span>
+                ${fmt(otherSales)}
+              </span>
+            </div>
+
+            <div class="person-stat">
+              <span
+                style="color:var(--muted)"
+              >
+                Other disc %
+              </span>
+
+              <span
+                style="color:${
+                  otherDiscount >
+                  target
+                    ? 'var(--red)'
+                    : 'var(--green)'
+                }"
+              >
+                ${
+                  otherDiscount
+                    .toFixed(1)
+                }%
+              </span>
+            </div>
+
+            <div
+              class="person-stat"
+              style="margin-top:4px"
+            >
+              <span
+                style="font-weight:600"
+              >
+                Overall disc %
+              </span>
+
+              <span
+                style="
+                  font-weight:600;
+                  color:${
+                    onBonus
+                      ? 'var(--green)'
+                      : 'var(--red)'
+                  }
+                "
+              >
+                ${
+                  overallDiscount
+                    .toFixed(1)
+                }%
+              </span>
+            </div>
+
+            <div class="disc-bar-wrap">
+              <div
+                class="disc-bar ${barClass}"
+                style="
+                  width:${barPercent}%
+                "
+              ></div>
+            </div>
+
+            <div>
+              <span
+                class="bonus-badge ${
+                  onBonus
+                    ? 'on'
+                    : 'off'
+                }"
+              >
+                ${
+                  onBonus
+                    ? '✓ Bonus eligible'
+                    : '✗ Above target'
+                }
+              </span>
+
+              <span
+                style="
+                  font-size:11px;
+                  color:var(--muted);
+                  margin-left:6px
+                "
+              >
+                target: ≤${target}%
+              </span>
+            </div>
+
+          </div>
+        `;
+      })
+      .join('');
+}
 // ── Discount summary ───────────────────────────────────────────────────────
 
 function renderDiscountSummary() {

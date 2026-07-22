@@ -1339,7 +1339,7 @@ function normaliseClassificationName(
  * nested subcategories are classified by their top-level category as well.
  */
 function itemHasCategory(
-  itemId,
+  itemRef,
   itemIndex,
   requiredCategory
 ) {
@@ -1348,18 +1348,66 @@ function itemHasCategory(
       requiredCategory
     );
 
-  const soldItem =
+  const itemId =
+    typeof itemRef === 'object'
+      ? itemRef?.value
+      : itemRef;
+
+  const itemRefName =
+    typeof itemRef === 'object'
+      ? itemRef?.name
+      : '';
+
+  const pathContainsCategory = value => {
+    const raw = String(value || '').trim();
+
+    if (!raw) {
+      return false;
+    }
+
+    const parts = raw
+      .split(':')
+      .map(normaliseClassificationName)
+      .filter(Boolean);
+
+    /*
+     * A fully qualified product name is normally:
+     * Category:Subcategory:Product.
+     * Only the path before the final product name is treated as category data.
+     */
+    if (parts.length > 1) {
+      return parts
+        .slice(0, -1)
+        .includes(wanted);
+    }
+
+    return false;
+  };
+
+  /*
+   * Some QBO responses return the fully qualified item path directly on the
+   * invoice line even when the category Item record is absent from the query.
+   */
+  if (pathContainsCategory(itemRefName)) {
+    return true;
+  }
+
+  let item =
     itemIndex.get(
       String(itemId || '')
     );
 
-  const firstParentId =
-    soldItem?.ParentRef?.value ||
-    soldItem?.ParentRef;
+  if (!item) {
+    return false;
+  }
 
-  let item = firstParentId
-    ? itemIndex.get(String(firstParentId))
-    : null;
+  if (
+    pathContainsCategory(
+      item.FullyQualifiedName
+    )
+  ) {
+    return true;
+  }
 
   const visited = new Set();
 
@@ -1376,27 +1424,52 @@ function itemHasCategory(
 
     visited.add(currentId);
 
-    const itemName =
-      normaliseClassificationName(
-        item.Name
-      );
+    const parentRef = item.ParentRef;
 
-    if (itemName === wanted) {
+    /*
+     * ParentRef.name is often available even when the parent category itself
+     * was not returned by the Item query (for example, inactive categories).
+     */
+    if (
+      normaliseClassificationName(
+        parentRef?.name
+      ) === wanted
+    ) {
       return true;
     }
 
     const parentId =
-      item.ParentRef?.value ||
-      item.ParentRef;
+      parentRef?.value ||
+      parentRef;
 
     if (!parentId) {
       break;
     }
 
-    item =
+    const parentItem =
       itemIndex.get(
         String(parentId)
       );
+
+    if (!parentItem) {
+      break;
+    }
+
+    if (
+      normaliseClassificationName(
+        parentItem.Name
+      ) === wanted ||
+      normaliseClassificationName(
+        parentItem.FullyQualifiedName
+      ) === wanted ||
+      pathContainsCategory(
+        parentItem.FullyQualifiedName
+      )
+    ) {
+      return true;
+    }
+
+    item = parentItem;
   }
 
   return false;
@@ -1410,19 +1483,18 @@ function classifySalesLine(
   line,
   itemIndex
 ) {
-  const itemId =
+  const itemRef =
     line
       ?.SalesItemLineDetail
-      ?.ItemRef
-      ?.value;
+      ?.ItemRef;
 
-  if (!itemId) {
+  if (!itemRef?.value) {
     return 'other';
   }
 
   if (
     itemHasCategory(
-      itemId,
+      itemRef,
       itemIndex,
       'Rycote Sales'
     )
@@ -1432,7 +1504,7 @@ function classifySalesLine(
 
   if (
     itemHasCategory(
-      itemId,
+      itemRef,
       itemIndex,
       'Advantage'
     )

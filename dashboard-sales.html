@@ -406,18 +406,10 @@ function saveToken(token, remember) {
       'auth_token',
       token
     );
-
-    sessionStorage.removeItem(
-      'auth_token'
-    );
   } else {
     sessionStorage.setItem(
       'auth_token',
       token
-    );
-
-    localStorage.removeItem(
-      'auth_token'
     );
   }
 }
@@ -430,28 +422,6 @@ function clearToken() {
   sessionStorage.removeItem(
     'auth_token'
   );
-}
-
-function showLogin() {
-  document
-    .getElementById('login-screen')
-    .style.display = 'flex';
-
-  document
-    .getElementById('dashboard')
-    .style.display = 'none';
-}
-
-function showDashboard() {
-  document
-    .getElementById('login-screen')
-    .style.display = 'none';
-
-  document
-    .getElementById('dashboard')
-    .style.display = 'block';
-
-  startDashboard();
 }
 
 async function checkSession() {
@@ -484,6 +454,46 @@ async function checkSession() {
   clearToken();
   showLogin();
 }
+
+function showLogin() {
+  document
+    .getElementById('login-screen')
+    .style.display = 'flex';
+
+  document
+    .getElementById('dashboard')
+    .style.display = 'none';
+}
+
+function showDashboard() {
+  document
+    .getElementById('login-screen')
+    .style.display = 'none';
+
+  document
+    .getElementById('dashboard')
+    .style.display = 'block';
+
+  startDashboard();
+}
+
+document
+  .getElementById('login-btn')
+  .addEventListener(
+    'click',
+    doLogin
+  );
+
+document
+  .getElementById('password')
+  .addEventListener(
+    'keydown',
+    event => {
+      if (event.key === 'Enter') {
+        doLogin();
+      }
+    }
+  );
 
 async function doLogin() {
   const username =
@@ -536,14 +546,8 @@ async function doLogin() {
         })
       });
 
-    let data = {};
-
-    try {
-      data =
-        await response.json();
-    } catch (error) {
-      data = {};
-    }
+    const data =
+      await response.json();
 
     if (
       response.ok &&
@@ -565,7 +569,7 @@ async function doLogin() {
     }
   } catch (error) {
     console.error(
-      'Login failed:',
+      'Login error:',
       error
     );
 
@@ -583,57 +587,32 @@ async function doLogin() {
     false;
 }
 
-async function doLogout() {
-  try {
-    await fetch('/users/logout', {
-      method: 'POST',
-
-      headers: {
-        'x-auth-token':
-          getToken() || ''
-      }
-    });
-  } catch (error) {
-    console.error(
-      'Logout failed:',
-      error
-    );
-  }
-
-  clearToken();
-
-  if (refreshTimer) {
-    clearInterval(
-      refreshTimer
-    );
-  }
-
-  showLogin();
-}
-
-document
-  .getElementById('login-btn')
-  .addEventListener(
-    'click',
-    doLogin
-  );
-
-document
-  .getElementById('password')
-  .addEventListener(
-    'keydown',
-    event => {
-      if (event.key === 'Enter') {
-        doLogin();
-      }
-    }
-  );
-
 document
   .getElementById('logout-btn')
   .addEventListener(
     'click',
-    doLogout
+    async () => {
+      await fetch(
+        '/users/logout',
+        {
+          method: 'POST',
+
+          headers: {
+            'x-auth-token':
+              getToken() || ''
+          }
+        }
+      );
+
+      clearToken();
+      showLogin();
+
+      if (refreshTimer) {
+        clearInterval(
+          refreshTimer
+        );
+      }
+    }
   );
 
 

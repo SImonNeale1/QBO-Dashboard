@@ -263,6 +263,7 @@
             <input class="target-input" type="number" id="bonus-target" value="10" min="0" max="100" step="0.5">
             <span>% max</span>
           </div>
+          <button class="btn" id="download-category-audit-btn" type="button">Download category audit</button>
           <select class="year-select" id="sales-year"></select>
         </div>
       </div>
@@ -783,6 +784,10 @@ function initialiseSalesControls() {
         renderDiscountSummary();
       }
     );
+
+  document
+    .getElementById('download-category-audit-btn')
+    .addEventListener('click', downloadCategoryAudit);
 }
 
 
@@ -917,6 +922,42 @@ function showApiError(
             ${message}
           </td>
         </tr>`;
+  }
+}
+
+
+async function downloadCategoryAudit() {
+  const button = document.getElementById('download-category-audit-btn');
+  const year = document.getElementById('sales-year')?.value || new Date().getFullYear();
+  const originalText = button.textContent;
+
+  button.disabled = true;
+  button.textContent = 'Preparing audit…';
+
+  try {
+    const data = await apiFetch(`/sales/category-debug?year=${encodeURIComponent(year)}&limit=2000`);
+
+    if (!data) {
+      return;
+    }
+
+    const blob = new Blob(
+      [JSON.stringify(data, null, 2)],
+      { type: 'application/json' }
+    );
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+
+    link.href = url;
+    link.download = `sales-category-audit-${year}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
   }
 }
 

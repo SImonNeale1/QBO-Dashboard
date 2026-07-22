@@ -209,11 +209,6 @@
 </head>
 <body>
 
-<!-- ── IMPORTANT: set this to your Azure app URL ──────────────────────────── -->
-<script>
-  const API = 'https://qbo-dashboard-abc.azurewebsites.net'; // ← CHANGE THIS
-</script>
-
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <!-- LOGIN SCREEN                                                           -->
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
@@ -327,256 +322,1377 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+
 <script>
 // ── State ──────────────────────────────────────────────────────────────────
-let invData   = null;
-let adjData   = [];
+
 let refreshTimer = null;
-let secondsAgo   = 0;
+let secondsAgo = 0;
+
+let salesData = null;
+let salespersonData = null;
+let discSummary = null;
+let discChart = null;
+
 
 // ── Formatting ─────────────────────────────────────────────────────────────
-function fmt(n) {
-  if (n === null || n === undefined || isNaN(n)) return '—';
-  const abs = Math.abs(n);
-  const s = abs >= 1000000 ? '£' + (abs/1000000).toFixed(2) + 'm'
-          : abs >= 1000    ? '£' + (abs/1000).toFixed(0) + 'k'
-          : '£' + abs.toLocaleString();
-  return n < 0 ? '-' + s : s;
-}
-function pct(n) { return isNaN(n) ? '—' : n.toFixed(1) + '%'; }
 
-// ── Auth ───────────────────────────────────────────────────────────────────
+function fmt(value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return '—';
+  }
+
+  const absolute = Math.abs(number);
+
+  let formatted;
+
+  if (absolute >= 1000000) {
+    formatted =
+      '£' +
+      (absolute / 1000000).toFixed(2) +
+      'm';
+  } else if (absolute >= 1000) {
+    formatted =
+      '£' +
+      (absolute / 1000).toFixed(0) +
+      'k';
+  } else {
+    formatted =
+      '£' +
+      absolute.toLocaleString('en-GB');
+  }
+
+  return number < 0
+    ? '-' + formatted
+    : formatted;
+}
+
+function safeNumber(value) {
+  const number = Number(value);
+
+  return Number.isFinite(number)
+    ? number
+    : 0;
+}
+
+function getBonusTarget() {
+  const value =
+    Number(
+      document
+        .getElementById('bonus-target')
+        .value
+    );
+
+  return Number.isFinite(value)
+    ? value
+    : 10;
+}
+
+
+// ── Authentication ─────────────────────────────────────────────────────────
+
+function getToken() {
+  return (
+    localStorage.getItem('auth_token') ||
+    sessionStorage.getItem('auth_token')
+  );
+}
+
+function saveToken(token, remember) {
+  if (remember) {
+    localStorage.setItem(
+      'auth_token',
+      token
+    );
+
+    sessionStorage.removeItem(
+      'auth_token'
+    );
+  } else {
+    sessionStorage.setItem(
+      'auth_token',
+      token
+    );
+
+    localStorage.removeItem(
+      'auth_token'
+    );
+  }
+}
+
+function clearToken() {
+  localStorage.removeItem(
+    'auth_token'
+  );
+
+  sessionStorage.removeItem(
+    'auth_token'
+  );
+}
+
+function showLogin() {
+  document
+    .getElementById('login-screen')
+    .style.display = 'flex';
+
+  document
+    .getElementById('dashboard')
+    .style.display = 'none';
+}
+
+function showDashboard() {
+  document
+    .getElementById('login-screen')
+    .style.display = 'none';
+
+  document
+    .getElementById('dashboard')
+    .style.display = 'block';
+
+  startDashboard();
+}
+
 async function checkSession() {
+  const token = getToken();
+
+  if (!token) {
+    showLogin();
+    return;
+  }
+
   try {
-    const r = await fetch(`${API}/users/me`, { credentials: 'include' });
-    if (r.ok) { showDashboard(); return true; }
-  } catch(e) {}
+    const response =
+      await fetch('/users/me', {
+        headers: {
+          'x-auth-token': token
+        }
+      });
+
+    if (response.ok) {
+      showDashboard();
+      return;
+    }
+  } catch (error) {
+    console.error(
+      'Session check failed:',
+      error
+    );
+  }
+
+  clearToken();
   showLogin();
-  return false;
 }
-
-function showLogin()     { document.getElementById('login-screen').style.display = 'flex';
-                           document.getElementById('dashboard').style.display = 'none'; }
-function showDashboard() { document.getElementById('login-screen').style.display = 'none';
-                           document.getElementById('dashboard').style.display = 'block';
-                           startDashboard(); }
-
-document.getElementById('login-btn').addEventListener('click', doLogin);
-document.getElementById('password').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 
 async function doLogin() {
-  const username = document.getElementById('username').value.trim();
-  const password = document.getElementById('password').value;
-  const errEl    = document.getElementById('login-error');
-  const btn      = document.getElementById('login-btn');
-  errEl.style.display = 'none';
-  btn.textContent = 'Signing in…'; btn.disabled = true;
+  const username =
+    document
+      .getElementById('username')
+      .value
+      .trim();
+
+  const password =
+    document
+      .getElementById('password')
+      .value;
+
+  const remember =
+    document
+      .getElementById('remember-me')
+      .checked;
+
+  const errorElement =
+    document
+      .getElementById('login-error');
+
+  const button =
+    document
+      .getElementById('login-btn');
+
+  errorElement.style.display =
+    'none';
+
+  button.textContent =
+    'Signing in…';
+
+  button.disabled =
+    true;
+
   try {
-    const r = await fetch(`${API}/users/login`, {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, rememberMe: document.getElementById('remember-me').checked }),
-    });
-    if (r.ok) { showDashboard(); }
-    else { errEl.style.display = 'block'; }
-  } catch(e) {
-    errEl.textContent = 'Could not reach server — check your connection';
-    errEl.style.display = 'block';
+    const response =
+      await fetch('/users/login', {
+        method: 'POST',
+
+        headers: {
+          'Content-Type':
+            'application/json'
+        },
+
+        body: JSON.stringify({
+          username,
+          password,
+          rememberMe: remember
+        })
+      });
+
+    let data = {};
+
+    try {
+      data =
+        await response.json();
+    } catch (error) {
+      data = {};
+    }
+
+    if (
+      response.ok &&
+      data.token
+    ) {
+      saveToken(
+        data.token,
+        remember
+      );
+
+      showDashboard();
+    } else {
+      errorElement.textContent =
+        data.error ||
+        'Incorrect username or password';
+
+      errorElement.style.display =
+        'block';
+    }
+  } catch (error) {
+    console.error(
+      'Login failed:',
+      error
+    );
+
+    errorElement.textContent =
+      'Could not reach server';
+
+    errorElement.style.display =
+      'block';
   }
-  btn.textContent = 'Sign in'; btn.disabled = false;
+
+  button.textContent =
+    'Sign in';
+
+  button.disabled =
+    false;
 }
 
-document.getElementById('logout-btn').addEventListener('click', async () => {
-  await fetch(`${API}/users/logout`, { method: 'POST', credentials: 'include' });
-  showLogin();
-  if (refreshTimer) clearInterval(refreshTimer);
-});
+async function doLogout() {
+  try {
+    await fetch('/users/logout', {
+      method: 'POST',
 
-// ── Dashboard bootstrap ────────────────────────────────────────────────────
+      headers: {
+        'x-auth-token':
+          getToken() || ''
+      }
+    });
+  } catch (error) {
+    console.error(
+      'Logout failed:',
+      error
+    );
+  }
+
+  clearToken();
+
+  if (refreshTimer) {
+    clearInterval(
+      refreshTimer
+    );
+  }
+
+  showLogin();
+}
+
+document
+  .getElementById('login-btn')
+  .addEventListener(
+    'click',
+    doLogin
+  );
+
+document
+  .getElementById('password')
+  .addEventListener(
+    'keydown',
+    event => {
+      if (event.key === 'Enter') {
+        doLogin();
+      }
+    }
+  );
+
+document
+  .getElementById('logout-btn')
+  .addEventListener(
+    'click',
+    doLogout
+  );
+
+
+// ── Dashboard startup ──────────────────────────────────────────────────────
+
 function startDashboard() {
+  initialiseSalesControls();
   loadAll();
-  loadAdj();
-  initSalesYearSelect();
-  loadSalesData();
+
   secondsAgo = 0;
-  if (refreshTimer) clearInterval(refreshTimer);
-  refreshTimer = setInterval(() => {
-    secondsAgo++;
-    const mins = Math.floor(secondsAgo / 60);
-    document.getElementById('refresh-badge').textContent =
-      mins === 0 ? 'Refreshed just now' : `Refreshed ${mins}m ago`;
-    if (secondsAgo % 60 === 0) { loadAll(); secondsAgo = 0; }
-  }, 1000);
+
+  if (refreshTimer) {
+    clearInterval(
+      refreshTimer
+    );
+  }
+
+  refreshTimer =
+    setInterval(() => {
+      secondsAgo++;
+
+      const minutes =
+        Math.floor(
+          secondsAgo / 60
+        );
+
+      document
+        .getElementById(
+          'refresh-badge'
+        )
+        .textContent =
+          minutes === 0
+            ? 'Refreshed just now'
+            : `Refreshed ${minutes}m ago`;
+
+      if (
+        secondsAgo % 60 === 0
+      ) {
+        loadAll();
+        secondsAgo = 0;
+      }
+    }, 1000);
 }
 
 async function loadAll() {
-  document.getElementById('refresh-badge').textContent = 'Refreshing…';
+  document
+    .getElementById(
+      'refresh-badge'
+    )
+    .textContent =
+      'Refreshing…';
+
   await loadSalesData();
-  document.getElementById('refresh-badge').textContent = 'Refreshed just now';
+
+  document
+    .getElementById(
+      'refresh-badge'
+    )
+    .textContent =
+      'Refreshed just now';
+
   secondsAgo = 0;
 }
 
-// ── API calls ──────────────────────────────────────────────────────────────
-async function apiFetch(path) {
-  const r = await fetch(`${API}/api${path}`, { credentials: 'include' });
-  if (r.status === 503) { console.warn('QBO not connected'); return null; }
-  if (r.status === 401) { showLogin(); return null; }
-  if (!r.ok) return null;
-  return r.json();
-}
 
-// ── Sales report ───────────────────────────────────────────────────────────
+// ── Sales controls ─────────────────────────────────────────────────────────
 
-let salesData     = null;
-let salespersonData = null;
-let discSummary   = null;
-let discChart     = null;
+function initialiseSalesControls() {
+  const selector =
+    document.getElementById(
+      'sales-year'
+    );
 
-function getBonusTarget() {
-  return parseFloat(document.getElementById('bonus-target').value) || 10;
-}
-
-function initSalesYearSelect() {
-  const sel = document.getElementById('sales-year');
-  const now = new Date().getFullYear();
-  sel.innerHTML = '';
-  for (let y = now; y >= now - 3; y--) {
-    const opt = document.createElement('option');
-    opt.value = y; opt.textContent = y;
-    if (y === now) opt.selected = true;
-    sel.appendChild(opt);
+  if (
+    selector.dataset.initialised ===
+    '1'
+  ) {
+    return;
   }
-  sel.addEventListener('change', loadSalesData);
-  document.getElementById('bonus-target').addEventListener('input', () => {
-    renderSalesTable();
-    renderPersonCards();
-    renderDiscSummary();
-  });
+
+  selector.dataset.initialised =
+    '1';
+
+  const currentYear =
+    new Date().getFullYear();
+
+  selector.innerHTML = '';
+
+  for (
+    let year = currentYear;
+    year >= currentYear - 3;
+    year--
+  ) {
+    const option =
+      document.createElement(
+        'option'
+      );
+
+    option.value =
+      String(year);
+
+    option.textContent =
+      String(year);
+
+    if (year === currentYear) {
+      option.selected = true;
+    }
+
+    selector.appendChild(
+      option
+    );
+  }
+
+  selector.addEventListener(
+    'change',
+    loadAll
+  );
+
+  document
+    .getElementById(
+      'bonus-target'
+    )
+    .addEventListener(
+      'input',
+      () => {
+        renderSalesTable();
+        renderPersonCards();
+        renderDiscountSummary();
+      }
+    );
 }
+
+
+// ── API ────────────────────────────────────────────────────────────────────
+
+async function apiFetch(path) {
+  try {
+    const response =
+      await fetch(
+        '/api' + path,
+        {
+          headers: {
+            'x-auth-token':
+              getToken() || ''
+          }
+        }
+      );
+
+    if (
+      response.status === 401
+    ) {
+      clearToken();
+      showLogin();
+      return null;
+    }
+
+    if (!response.ok) {
+      const errorText =
+        await response.text();
+
+      console.error(
+        `Sales API failed: /api${path}`,
+        response.status,
+        errorText
+      );
+
+      showApiError(
+        path,
+        response.status
+      );
+
+      return null;
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error(
+      `Sales API error: /api${path}`,
+      error
+    );
+
+    showApiError(
+      path,
+      0
+    );
+
+    return null;
+  }
+}
+
+function showApiError(
+  path,
+  status
+) {
+  const message =
+    status === 404
+      ? `Missing backend route: /api${path}`
+      : (
+          `Could not load /api${path}` +
+          (
+            status
+              ? ` (${status})`
+              : ''
+          )
+        );
+
+  if (
+    path.startsWith(
+      '/sales/monthly'
+    )
+  ) {
+    document
+      .getElementById(
+        'sales-body'
+      )
+      .innerHTML =
+        `<tr>
+          <td
+            colspan="9"
+            class="loading"
+            style="color:var(--red)"
+          >
+            ${message}
+          </td>
+        </tr>`;
+  }
+
+  if (
+    path.startsWith(
+      '/sales/salesperson'
+    )
+  ) {
+    document
+      .getElementById(
+        'person-cards'
+      )
+      .innerHTML =
+        `<div
+          class="loading"
+          style="color:var(--red)"
+        >
+          ${message}
+        </div>`;
+  }
+
+  if (
+    path.startsWith(
+      '/sales/discount-summary'
+    )
+  ) {
+    document
+      .getElementById(
+        'disc-summary-body'
+      )
+      .innerHTML =
+        `<tr>
+          <td
+            colspan="4"
+            class="loading"
+            style="color:var(--red)"
+          >
+            ${message}
+          </td>
+        </tr>`;
+  }
+}
+
+
+// ── Load sales data ────────────────────────────────────────────────────────
 
 async function loadSalesData() {
-  const year = document.getElementById('sales-year')?.value || new Date().getFullYear();
-  const [monthly, persons, summary] = await Promise.all([
-    apiFetch(`/sales/monthly?year=${year}`),
-    apiFetch(`/sales/salesperson?year=${year}`),
-    apiFetch(`/sales/discount-summary?year=${year}`),
-  ]);
-  if (monthly)  { salesData       = monthly;  renderSalesTable(); }
-  if (persons)  { salespersonData = persons;  renderPersonCards(); }
-  if (summary)  { discSummary     = summary;  renderDiscSummary(); }
+  const selectedYear =
+    document
+      .getElementById(
+        'sales-year'
+      )
+      ?.value;
+
+  const year =
+    selectedYear ||
+    new Date().getFullYear();
+
+  const results =
+    await Promise.allSettled([
+      apiFetch(
+        `/sales/monthly?year=${year}`
+      ),
+
+      apiFetch(
+        `/sales/salesperson?year=${year}`
+      ),
+
+      apiFetch(
+        `/sales/discount-summary?year=${year}`
+      )
+    ]);
+
+  const monthlyResult =
+    results[0];
+
+  const salespersonResult =
+    results[1];
+
+  const summaryResult =
+    results[2];
+
+  if (
+    monthlyResult.status ===
+      'fulfilled' &&
+    monthlyResult.value
+  ) {
+    salesData =
+      monthlyResult.value;
+
+    renderSalesTable();
+  }
+
+  if (
+    salespersonResult.status ===
+      'fulfilled' &&
+    salespersonResult.value
+  ) {
+    salespersonData =
+      salespersonResult.value;
+
+    renderPersonCards();
+  }
+
+  if (
+    summaryResult.status ===
+      'fulfilled' &&
+    summaryResult.value
+  ) {
+    discSummary =
+      summaryResult.value;
+
+    renderDiscountSummary();
+  }
 }
+
+
+// ── Monthly sales table and chart ──────────────────────────────────────────
 
 function renderSalesTable() {
-  if (!salesData) return;
-  const tbody = document.getElementById('sales-body');
-  const target = getBonusTarget();
-  tbody.innerHTML = salesData.months.map(m => {
-    const aDisc = m.advDiscountPct;
-    const oDisc = m.otherDiscountPct;
-    return `<tr>
-      <td><strong>${m.label}</strong></td>
-      <td class="num">${fmt(m.advantageSales)}</td>
-      <td class="num">${fmt(m.otherSales)}</td>
-      <td class="num bold">${fmt(m.totalSales)}</td>
-      <td class="num">${fmt(m.ytdAdvantage)}</td>
-      <td class="num">${fmt(m.ytdOther)}</td>
-      <td class="num bold">${fmt(m.ytdTotal)}</td>
-      <td class="num" style="color:${aDisc > target ? 'var(--red)' : aDisc > target * 0.8 ? 'var(--amber)' : 'var(--green)'}">${aDisc.toFixed(1)}%</td>
-      <td class="num" style="color:${oDisc > target ? 'var(--red)' : oDisc > target * 0.8 ? 'var(--amber)' : 'var(--green)'}">${oDisc.toFixed(1)}%</td>
-    </tr>`;
-  }).join('');
+  if (!salesData) {
+    return;
+  }
 
-  // Discount trend chart
-  if (discChart) discChart.destroy();
-  const labels = salesData.months.map(m => m.label);
-  const advDiscs  = salesData.months.map(m => m.advDiscountPct);
-  const othDiscs  = salesData.months.map(m => m.otherDiscountPct);
-  const targetLine = salesData.months.map(() => getBonusTarget());
+  const tableBody =
+    document.getElementById(
+      'sales-body'
+    );
 
-  discChart = new Chart(document.getElementById('disc-chart'), {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [
-        { label:'Advantage disc %', data: advDiscs,   borderColor:'#4a8fe8', backgroundColor:'rgba(74,143,232,.1)', tension:.3, fill:true },
-        { label:'Other disc %',     data: othDiscs,   borderColor:'#1db87a', backgroundColor:'rgba(29,184,122,.1)', tension:.3, fill:true },
-        { label:'Target',           data: targetLine, borderColor:'#e05252', borderDash:[5,4], pointRadius:0 },
-      ]
-    },
-    options: {
-      responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{ labels:{ color:'#8b90a8', font:{ size:11 }}}},
-      scales:{
-        x:{ grid:{ display:false }, ticks:{ color:'#8b90a8', font:{ size:11 }}},
-        y:{ grid:{ color:'rgba(46,51,73,.5)' }, ticks:{ color:'#8b90a8', font:{ size:11 }, callback: v => v + '%' }, min:0 },
-      }
-    }
-  });
+  const target =
+    getBonusTarget();
+
+  const months =
+    Array.isArray(
+      salesData.months
+    )
+      ? salesData.months
+      : [];
+
+  if (!months.length) {
+    tableBody.innerHTML =
+      `<tr>
+        <td
+          colspan="9"
+          class="loading"
+        >
+          No sales data returned
+        </td>
+      </tr>`;
+
+    clearDiscountChart();
+    return;
+  }
+
+  tableBody.innerHTML =
+    months.map(month => {
+      const advantageSales =
+        safeNumber(
+          month.advantageSales
+        );
+
+      const otherSales =
+        safeNumber(
+          month.otherSales
+        );
+
+      const totalSales =
+        safeNumber(
+          month.totalSales
+        ) ||
+        advantageSales +
+        otherSales;
+
+      const ytdAdvantage =
+        safeNumber(
+          month.ytdAdvantage
+        );
+
+      const ytdOther =
+        safeNumber(
+          month.ytdOther
+        );
+
+      const ytdTotal =
+        safeNumber(
+          month.ytdTotal
+        ) ||
+        ytdAdvantage +
+        ytdOther;
+
+      const advantageDiscount =
+        safeNumber(
+          month.advDiscountPct
+        );
+
+      const otherDiscount =
+        safeNumber(
+          month.otherDiscountPct
+        );
+
+      const advantageColour =
+        getDiscountColour(
+          advantageDiscount,
+          target
+        );
+
+      const otherColour =
+        getDiscountColour(
+          otherDiscount,
+          target
+        );
+
+      return `
+        <tr>
+          <td>
+            <strong>
+              ${month.label || ''}
+            </strong>
+          </td>
+
+          <td class="num">
+            ${fmt(advantageSales)}
+          </td>
+
+          <td class="num">
+            ${fmt(otherSales)}
+          </td>
+
+          <td class="num bold">
+            ${fmt(totalSales)}
+          </td>
+
+          <td class="num">
+            ${fmt(ytdAdvantage)}
+          </td>
+
+          <td class="num">
+            ${fmt(ytdOther)}
+          </td>
+
+          <td class="num bold">
+            ${fmt(ytdTotal)}
+          </td>
+
+          <td
+            class="num"
+            style="color:${advantageColour}"
+          >
+            ${advantageDiscount.toFixed(1)}%
+          </td>
+
+          <td
+            class="num"
+            style="color:${otherColour}"
+          >
+            ${otherDiscount.toFixed(1)}%
+          </td>
+        </tr>`;
+    }).join('');
+
+  buildDiscountChart(
+    months,
+    target
+  );
 }
+
+function getDiscountColour(
+  discount,
+  target
+) {
+  if (discount > target) {
+    return 'var(--red)';
+  }
+
+  if (
+    discount >
+    target * 0.8
+  ) {
+    return 'var(--amber)';
+  }
+
+  return 'var(--green)';
+}
+
+function clearDiscountChart() {
+  if (discChart) {
+    discChart.destroy();
+    discChart = null;
+  }
+}
+
+function buildDiscountChart(
+  months,
+  target
+) {
+  clearDiscountChart();
+
+  const canvas =
+    document.getElementById(
+      'disc-chart'
+    );
+
+  const labels =
+    months.map(
+      month =>
+        month.label || ''
+    );
+
+  const advantageDiscounts =
+    months.map(
+      month =>
+        safeNumber(
+          month.advDiscountPct
+        )
+    );
+
+  const otherDiscounts =
+    months.map(
+      month =>
+        safeNumber(
+          month.otherDiscountPct
+        )
+    );
+
+  const targetLine =
+    months.map(
+      () => target
+    );
+
+  discChart =
+    new Chart(
+      canvas,
+      {
+        type: 'line',
+
+        data: {
+          labels,
+
+          datasets: [
+            {
+              label:
+                'Advantage disc %',
+
+              data:
+                advantageDiscounts,
+
+              borderColor:
+                '#4a8fe8',
+
+              backgroundColor:
+                'rgba(74,143,232,.1)',
+
+              tension: 0.3,
+              fill: true
+            },
+
+            {
+              label:
+                'Other disc %',
+
+              data:
+                otherDiscounts,
+
+              borderColor:
+                '#1db87a',
+
+              backgroundColor:
+                'rgba(29,184,122,.1)',
+
+              tension: 0.3,
+              fill: true
+            },
+
+            {
+              label: 'Target',
+
+              data:
+                targetLine,
+
+              borderColor:
+                '#e05252',
+
+              borderDash:
+                [5, 4],
+
+              pointRadius: 0
+            }
+          ]
+        },
+
+        options: {
+          responsive: true,
+
+          maintainAspectRatio:
+            false,
+
+          plugins: {
+            legend: {
+              labels: {
+                color:
+                  '#8b90a8',
+
+                font: {
+                  size: 11
+                }
+              }
+            }
+          },
+
+          scales: {
+            x: {
+              grid: {
+                display: false
+              },
+
+              ticks: {
+                color:
+                  '#8b90a8',
+
+                font: {
+                  size: 11
+                }
+              }
+            },
+
+            y: {
+              beginAtZero:
+                true,
+
+              grid: {
+                color:
+                  'rgba(46,51,73,.5)'
+              },
+
+              ticks: {
+                color:
+                  '#8b90a8',
+
+                font: {
+                  size: 11
+                },
+
+                callback:
+                  value =>
+                    value + '%'
+              }
+            }
+          }
+        }
+      }
+    );
+}
+
+
+// ── Salesperson cards ──────────────────────────────────────────────────────
 
 function renderPersonCards() {
-  if (!salespersonData) return;
-  const target  = getBonusTarget();
-  const regions = { Andy:'South West · South East · Wales (50%)', Sean:'Midlands · Wales (50%)', Derek:'North · Scotland' };
-  document.getElementById('person-cards').innerHTML = salespersonData.salespeople.map(p => {
-    const disc    = p.overall.discountPct;
-    const onBonus = disc <= target;
-    const barPct  = Math.min((disc / (target * 1.5)) * 100, 100);
-    const barCls  = disc <= target ? 'good' : disc <= target * 1.2 ? 'warn' : 'bad';
-    return `<div class="person-card">
-      <div class="person-name">${p.person}</div>
-      <div class="person-region">${regions[p.person] || ''}</div>
-      <div class="person-stat">
-        <span style="color:var(--muted)">Advantage sales</span>
-        <span>${fmt(p.advantage.sales)}</span>
-      </div>
-      <div class="person-stat">
-        <span style="color:var(--muted)">Advantage disc %</span>
-        <span style="color:${p.advantage.discountPct > target ? 'var(--red)' : 'var(--green)'}">${p.advantage.discountPct.toFixed(1)}%</span>
-      </div>
-      <div class="person-stat">
-        <span style="color:var(--muted)">Other sales</span>
-        <span>${fmt(p.other.sales)}</span>
-      </div>
-      <div class="person-stat">
-        <span style="color:var(--muted)">Other disc %</span>
-        <span style="color:${p.other.discountPct > target ? 'var(--red)' : 'var(--green)'}">${p.other.discountPct.toFixed(1)}%</span>
-      </div>
-      <div class="person-stat" style="margin-top:4px">
-        <span style="font-weight:600">Overall disc %</span>
-        <span style="font-weight:600;color:${onBonus ? 'var(--green)' : 'var(--red)'}">${disc.toFixed(1)}%</span>
-      </div>
-      <div class="disc-bar-wrap"><div class="disc-bar ${barCls}" style="width:${barPct}%"></div></div>
-      <div>
-        <span class="bonus-badge ${onBonus ? 'on' : 'off'}">${onBonus ? '✓ Bonus eligible' : '✗ Above target'}</span>
-        <span style="font-size:11px;color:var(--muted);margin-left:6px">target: ≤${target}%</span>
-      </div>
-    </div>`;
-  }).join('');
+  if (!salespersonData) {
+    return;
+  }
+
+  const container =
+    document.getElementById(
+      'person-cards'
+    );
+
+  const target =
+    getBonusTarget();
+
+  const salespeople =
+    Array.isArray(
+      salespersonData.salespeople
+    )
+      ? salespersonData.salespeople
+      : [];
+
+  if (!salespeople.length) {
+    container.innerHTML =
+      `<div class="loading">
+        No salesperson data returned
+      </div>`;
+
+    return;
+  }
+
+  const regions = {
+    Andy:
+      'South West · South East · Wales (50%)',
+
+    Sean:
+      'Midlands · Wales (50%)',
+
+    Derek:
+      'North · Scotland'
+  };
+
+  container.innerHTML =
+    salespeople.map(person => {
+      const name =
+        person.person ||
+        person.name ||
+        'Unknown';
+
+      const advantageSales =
+        safeNumber(
+          person?.advantage?.sales
+        );
+
+      const otherSales =
+        safeNumber(
+          person?.other?.sales
+        );
+
+      const advantageDiscount =
+        safeNumber(
+          person?.advantage
+            ?.discountPct
+        );
+
+      const otherDiscount =
+        safeNumber(
+          person?.other
+            ?.discountPct
+        );
+
+      const overallDiscount =
+        safeNumber(
+          person?.overall
+            ?.discountPct
+        );
+
+      const onBonus =
+        overallDiscount <=
+        target;
+
+      const barPercentage =
+        target > 0
+          ? Math.min(
+              (
+                overallDiscount /
+                (target * 1.5)
+              ) * 100,
+              100
+            )
+          : 0;
+
+      let barClass =
+        'good';
+
+      if (
+        overallDiscount >
+        target * 1.2
+      ) {
+        barClass = 'bad';
+      } else if (
+        overallDiscount >
+        target
+      ) {
+        barClass = 'warn';
+      }
+
+      return `
+        <div class="person-card">
+
+          <div class="person-name">
+            ${name}
+          </div>
+
+          <div class="person-region">
+            ${regions[name] || ''}
+          </div>
+
+          <div class="person-stat">
+            <span
+              style="color:var(--muted)"
+            >
+              Advantage sales
+            </span>
+
+            <span>
+              ${fmt(advantageSales)}
+            </span>
+          </div>
+
+          <div class="person-stat">
+            <span
+              style="color:var(--muted)"
+            >
+              Advantage disc %
+            </span>
+
+            <span
+              style="color:${
+                advantageDiscount >
+                target
+                  ? 'var(--red)'
+                  : 'var(--green)'
+              }"
+            >
+              ${advantageDiscount.toFixed(1)}%
+            </span>
+          </div>
+
+          <div class="person-stat">
+            <span
+              style="color:var(--muted)"
+            >
+              Other sales
+            </span>
+
+            <span>
+              ${fmt(otherSales)}
+            </span>
+          </div>
+
+          <div class="person-stat">
+            <span
+              style="color:var(--muted)"
+            >
+              Other disc %
+            </span>
+
+            <span
+              style="color:${
+                otherDiscount >
+                target
+                  ? 'var(--red)'
+                  : 'var(--green)'
+              }"
+            >
+              ${otherDiscount.toFixed(1)}%
+            </span>
+          </div>
+
+          <div
+            class="person-stat"
+            style="margin-top:4px"
+          >
+            <span
+              style="font-weight:600"
+            >
+              Overall disc %
+            </span>
+
+            <span
+              style="
+                font-weight:600;
+                color:${
+                  onBonus
+                    ? 'var(--green)'
+                    : 'var(--red)'
+                }
+              "
+            >
+              ${overallDiscount.toFixed(1)}%
+            </span>
+          </div>
+
+          <div class="disc-bar-wrap">
+            <div
+              class="disc-bar ${barClass}"
+              style="width:${barPercentage}%"
+            ></div>
+          </div>
+
+          <div>
+            <span
+              class="bonus-badge ${
+                onBonus
+                  ? 'on'
+                  : 'off'
+              }"
+            >
+              ${
+                onBonus
+                  ? '✓ Bonus eligible'
+                  : '✗ Above target'
+              }
+            </span>
+
+            <span
+              style="
+                font-size:11px;
+                color:var(--muted);
+                margin-left:6px
+              "
+            >
+              target: ≤${target}%
+            </span>
+          </div>
+
+        </div>`;
+    }).join('');
 }
 
-function renderDiscSummary() {
-  if (!discSummary) return;
-  const target = getBonusTarget();
+
+// ── Discount summary ───────────────────────────────────────────────────────
+
+function renderDiscountSummary() {
+  if (!discSummary) {
+    return;
+  }
+
+  const target =
+    getBonusTarget();
+
   const rows = [
-    ['Advantage products', discSummary.advantage.sales, discSummary.advantage.discountPct],
-    ['Other products',     discSummary.other.sales,     discSummary.other.discountPct],
-    ['Combined',           discSummary.combined.sales,  discSummary.combined.discountPct],
+    {
+      label:
+        'Advantage products',
+
+      sales:
+        safeNumber(
+          discSummary
+            ?.advantage
+            ?.sales
+        ),
+
+      discount:
+        safeNumber(
+          discSummary
+            ?.advantage
+            ?.discountPct
+        )
+    },
+
+    {
+      label:
+        'Other products',
+
+      sales:
+        safeNumber(
+          discSummary
+            ?.other
+            ?.sales
+        ),
+
+      discount:
+        safeNumber(
+          discSummary
+            ?.other
+            ?.discountPct
+        )
+    },
+
+    {
+      label:
+        'Combined',
+
+      sales:
+        safeNumber(
+          discSummary
+            ?.combined
+            ?.sales
+        ),
+
+      discount:
+        safeNumber(
+          discSummary
+            ?.combined
+            ?.discountPct
+        )
+    }
   ];
-  document.getElementById('disc-summary-body').innerHTML = rows.map(([label, sales, disc]) => {
-    const vs = (disc - target).toFixed(1);
-    const vsColor = disc <= target ? 'var(--green)' : 'var(--red)';
-    return `<tr>
-      <td${label==='Combined'?' class="bold"':''}>${label}</td>
-      <td class="num${label==='Combined'?' bold':''}">${fmt(sales)}</td>
-      <td class="num" style="color:${disc > target ? 'var(--red)' : 'var(--green)'}">${disc.toFixed(1)}%</td>
-      <td class="num" style="color:${vsColor}">${disc <= target ? '✓ On target' : '+' + vs + '% over'}</td>
-    </tr>`;
-  }).join('');
+
+  document
+    .getElementById(
+      'disc-summary-body'
+    )
+    .innerHTML =
+      rows.map(row => {
+        const difference =
+          row.discount -
+          target;
+
+        const onTarget =
+          row.discount <=
+          target;
+
+        const boldClass =
+          row.label ===
+          'Combined'
+            ? ' bold'
+            : '';
+
+        return `
+          <tr>
+
+            <td class="${boldClass}">
+              ${row.label}
+            </td>
+
+            <td
+              class="num${boldClass}"
+            >
+              ${fmt(row.sales)}
+            </td>
+
+            <td
+              class="num"
+              style="color:${
+                onTarget
+                  ? 'var(--green)'
+                  : 'var(--red)'
+              }"
+            >
+              ${row.discount.toFixed(1)}%
+            </td>
+
+            <td
+              class="num"
+              style="color:${
+                onTarget
+                  ? 'var(--green)'
+                  : 'var(--red)'
+              }"
+            >
+              ${
+                onTarget
+                  ? '✓ On target'
+                  : '+' +
+                    difference.toFixed(1) +
+                    '% over'
+              }
+            </td>
+
+          </tr>`;
+      }).join('');
 }
 
-// ── Boot ───────────────────────────────────────────────────────────────────
+
+// ── Start ──────────────────────────────────────────────────────────────────
+
 checkSession();
+
 </script>
 </body>
 </html>

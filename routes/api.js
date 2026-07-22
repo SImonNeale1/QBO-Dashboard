@@ -404,12 +404,45 @@ apiRouter.get('/expenses', async (req, res) => {
           ''
         ).trim();
 
+        const parsedKey = normaliseMonthKey(
+          columnKey || title
+        );
+
+        /*
+         * QuickBooks can label a partial current month as "Jul 22",
+         * meaning "July up to the 22nd". JavaScript otherwise parses
+         * that as 22 July 2001. Derive the month from the report start
+         * and the column position whenever the parsed year is implausible.
+         */
+        const startMonth = new Date(`${startDate}T00:00:00`);
+        const expectedMonth = new Date(
+          startMonth.getFullYear(),
+          startMonth.getMonth() + (index - 1),
+          1
+        );
+        const expectedKey =
+          `${expectedMonth.getFullYear()}-` +
+          String(expectedMonth.getMonth() + 1).padStart(2, '0');
+
+        const parsedYear = Number(parsedKey.slice(0, 4));
+        const startYear = startMonth.getFullYear();
+        const endYear = new Date(`${endDate}T00:00:00`).getFullYear();
+        const key =
+          parsedKey && parsedYear >= startYear - 1 && parsedYear <= endYear + 1
+            ? parsedKey
+            : expectedKey;
+
+        const [keyYear, keyMonth] = key.split('-').map(Number);
+        const displayTitle = new Date(keyYear, keyMonth - 1, 1)
+          .toLocaleDateString('en-GB', {
+            month: 'short',
+            year: '2-digit'
+          });
+
         return {
           index,
-          title,
-          key: normaliseMonthKey(
-            columnKey || title
-          )
+          title: displayTitle,
+          key
         };
       })
       .filter(

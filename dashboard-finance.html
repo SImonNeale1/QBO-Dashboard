@@ -429,6 +429,10 @@ async function loadBS() {
   bsData = data;
 
   document.getElementById('kpi-cash').textContent = fmt(data.cash);
+  // Use QuickBooks' net Accounts Receivable balance for the AR KPI.
+  // This includes customer credits and unapplied receipts, unlike a gross
+  // sum of positive invoice balances.
+  document.getElementById('kpi-ar').textContent = fmt(data.accountsReceivable);
   document.getElementById('bs-date').textContent = data.asOf || 'Today';
 
   const rows = [
@@ -456,7 +460,11 @@ async function loadBS() {
 async function loadInvoices() {
   const data=await apiFetch('/invoices/outstanding'); if(!data)return;
   invData=data;
-  document.getElementById('kpi-ar').textContent=fmt(data.totalOutstanding);
+  // Prefer the net AR balance from the balance sheet. Fall back to the gross
+  // open-invoice total only if the balance sheet has not loaded yet.
+  document.getElementById('kpi-ar').textContent=fmt(
+    bsData?.accountsReceivable ?? data.totalOutstanding
+  );
   document.getElementById('kpi-ar-sub').textContent =
     `${fmt(data.overdueTotal)} overdue • ${data.overdueCount} invoices`;
   if(data.overdueCount>0)document.getElementById('inv-meta').textContent=`${data.overdueCount} overdue`;

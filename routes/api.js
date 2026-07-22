@@ -1845,35 +1845,59 @@ function itemHasCategory(
  * Classify one invoice sales line using Item Category only.
  */
 function classifySalesLine(
-  _invoice,
+  invoice,
   line,
   itemIndex
 ) {
+  const detail =
+    line?.SalesItemLineDetail || {};
+
   const itemRef =
-    line
-      ?.SalesItemLineDetail
-      ?.ItemRef;
+    detail.ItemRef;
 
-  if (!itemRef?.value) {
-    return 'other';
-  }
+  /*
+   * QuickBooks can store Class either on each sales line or on the whole
+   * invoice, depending on the company class-tracking configuration.
+   */
+  const className =
+    normaliseClassificationName(
+      detail.ClassRef?.name ||
+      line?.ClassRef?.name ||
+      invoice?.ClassRef?.name ||
+      ''
+    );
 
+  /*
+   * Reseller products are Item Category "Rycote Sales" and Class "CGL".
+   * Use either field because historical QBO invoice lines do not always expose
+   * enough Item hierarchy data to reconstruct the category reliably.
+   */
   if (
     itemHasCategory(
       itemRef,
       itemIndex,
       'Rycote Sales'
-    )
+    ) ||
+    className ===
+      normaliseClassificationName('CGL')
   ) {
     return 'reseller';
   }
 
+  /*
+   * Advantage products are Item Category "Advantage" and Class
+   * "Advantage Products". Keep category support and add the class fallback.
+   */
   if (
     itemHasCategory(
       itemRef,
       itemIndex,
       'Advantage'
-    )
+    ) ||
+    className ===
+      normaliseClassificationName(
+        'Advantage Products'
+      )
   ) {
     return 'advantage';
   }

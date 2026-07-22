@@ -1455,6 +1455,8 @@ function classifySalesLine(
       )
     );
 
+console.log('CLASS=', className, 'ITEM=', itemIndex.get(itemId)?.FullyQualifiedName);
+  
   /*
    * Reseller:
    * Category = Rycote Sales

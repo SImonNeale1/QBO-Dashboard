@@ -93,14 +93,13 @@ apiRouter.get('/invoices/outstanding', async (req, res) => {
   try {
     if (!ensureQBO(req, res)) return;
 
-    const data = await qboQuery(
-      req.qbo,
-      `SELECT Id, DocNumber, CustomerRef, Balance, DueDate, TotalAmt
-       FROM Invoice
-       MAXRESULTS 1000`
-    );
+    const invoiceRecords =
+      await qboQueryAllSalesRecords(
+        req.qbo,
+        'Invoice'
+      );
 
-    const invoices = (data.QueryResponse?.Invoice || [])
+    const invoices = invoiceRecords
       .map(invoice => ({
         id: invoice.Id,
         number: invoice.DocNumber,
@@ -695,8 +694,8 @@ apiRouter.get('/expenses', async (req, res) => {
  * Sales dashboard
  *
  * Classification priority for each invoice line:
- * 1. Reseller = item category "Rycote Sales" and class "CGL"
- * 2. Advantage = item category "Advantage" and class "Advantage Products"
+ * 1. Reseller = item category "Rycote Sales"
+ * 2. Advantage = item category "Advantage"
  * 3. Everything else = Other
  *
  * Reseller sales are excluded from discount calculations.
@@ -735,14 +734,14 @@ apiRouter.get('/sales/monthly', async (req, res) => {
         analysis.months,
 
       classificationRules: {
+        basis: 'Item Category',
+
         reseller: {
-          category: 'Rycote Sales',
-          class: 'CGL'
+          category: 'Rycote Sales'
         },
 
         advantage: {
-          category: 'Advantage',
-          class: 'Advantage Products'
+          category: 'Advantage'
         }
       }
     });
@@ -821,8 +820,8 @@ apiRouter.get(
         combined,
 
         excludedFromDiscountCalculations: {
-          category: 'Rycote Sales',
-          class: 'CGL'
+          basis: 'Item Category',
+          category: 'Rycote Sales'
         }
       });
     } catch (err) {
@@ -905,11 +904,6 @@ async function buildSalesAnalysis(
     );
   }
 
-  return {
-    debugItem: items[0]
-};
-
- 
   const currentDate =
     new Date();
 
@@ -1324,7 +1318,7 @@ async function qboQueryAllSalesRecords(
 }
 
 /**
- * Normalise QuickBooks category and class names.
+ * Normalise QuickBooks item and category names.
  */
 function normaliseClassificationName(
   value
@@ -1338,58 +1332,56 @@ function normaliseClassificationName(
 }
 
 /**
- * Determine whether an item belongs to
- * a specified QuickBooks category.
+ * Determine whether an item belongs to a specified QuickBooks item category.
+ *
+ * QuickBooks represents categories as Item records and products point to their
+ * category through ParentRef. This walks the full parent chain so products in
+ * nested subcategories are classified by their top-level category as well.
  */
 function itemHasCategory(
   itemId,
   itemIndex,
   requiredCategory
 ) {
-  let item =
-    itemIndex.get(
-      String(itemId)
-    );
-
   const wanted =
     normaliseClassificationName(
       requiredCategory
     );
 
-  const visited =
-    new Set();
-
-  while (
-    item &&
-    !visited.has(
-      String(item.Id)
-    )
-  ) {
-    visited.add(
-      String(item.Id)
+  const soldItem =
+    itemIndex.get(
+      String(itemId || '')
     );
 
-    const name =
+  const firstParentId =
+    soldItem?.ParentRef?.value ||
+    soldItem?.ParentRef;
+
+  let item = firstParentId
+    ? itemIndex.get(String(firstParentId))
+    : null;
+
+  const visited = new Set();
+
+  while (item) {
+    const currentId =
+      String(item.Id || '');
+
+    if (
+      !currentId ||
+      visited.has(currentId)
+    ) {
+      break;
+    }
+
+    visited.add(currentId);
+
+    const itemName =
       normaliseClassificationName(
         item.Name
       );
 
-    const fullyQualifiedName =
-      normaliseClassificationName(
-        item.FullyQualifiedName
-      );
-
-    if (
-      name === wanted ||
-      fullyQualifiedName ===
-        wanted ||
-      fullyQualifiedName.startsWith(
-        `${wanted} `
-      ) ||
-      fullyQualifiedName.includes(
-        ` ${wanted} `
-      )
-    ) {
+    if (itemName === wanted) {
       return true;
     }
 
@@ -1411,89 +1403,42 @@ function itemHasCategory(
 }
 
 /**
- * Read the class from the invoice line.
- * Invoice-level class is used as a fallback.
- */
-function getInvoiceLineClassName(
-  invoice,
-  line
-) {
-  return String(
-    line
-      ?.SalesItemLineDetail
-      ?.ClassRef
-      ?.name ||
-
-    line
-      ?.ClassRef
-      ?.name ||
-
-    invoice
-      ?.ClassRef
-      ?.name ||
-
-    ''
-  ).trim();
-}
-
-/**
- * Classify one invoice sales line.
+ * Classify one invoice sales line using Item Category only.
  */
 function classifySalesLine(
-  invoice,
+  _invoice,
   line,
   itemIndex
 ) {
   const itemId =
-    String(
-      line
-        ?.SalesItemLineDetail
-        ?.ItemRef
-        ?.value || ''
-    );
+    line
+      ?.SalesItemLineDetail
+      ?.ItemRef
+      ?.value;
 
+  if (!itemId) {
+    return 'other';
+  }
 
-  
-  /*
-   * Reseller:
-   * Category = Rycote Sales
-   * Class = CGL
-   */
   if (
     itemHasCategory(
       itemId,
       itemIndex,
       'Rycote Sales'
-    ) &&
-    className === 'cgl'
+    )
   ) {
     return 'reseller';
   }
 
-  /*
-   * Advantage:
-   * Category = Advantage
-   * Class = Advantage Products
-   */
   if (
     itemHasCategory(
-        itemId,
-        itemIndex,
-        'Rycote Sales'
+      itemId,
+      itemIndex,
+      'Advantage'
     )
-) {
-    return 'reseller';
-}
-
-if (
-    itemHasCategory(
-        itemId,
-        itemIndex,
-        'Advantage'
-    )
-) {
+  ) {
     return 'advantage';
-}
+  }
 
   return 'other';
 }
@@ -1614,8 +1559,12 @@ function parseQuickBooksDate(value) {
 }
 
 function normaliseSalesYear(value) {
-  const currentYear =
-    new Date().getFullYear();
+  const now = new Date();
+
+  const currentFinancialYear =
+    now.getMonth() >= 3
+      ? now.getFullYear()
+      : now.getFullYear() - 1;
 
   const requestedYear =
     Number.parseInt(value, 10);
@@ -1623,21 +1572,25 @@ function normaliseSalesYear(value) {
   if (
     Number.isInteger(requestedYear) &&
     requestedYear >= 2000 &&
-    requestedYear <= currentYear + 1
+    requestedYear <= currentFinancialYear + 1
   ) {
     return requestedYear;
   }
 
-  return currentYear;
+  return currentFinancialYear;
 }
 
 /**
  * Helpers
  */
 function today() {
-  return new Date()
-    .toISOString()
-    .slice(0, 10);
+  const now = new Date();
+
+  return [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0')
+  ].join('-');
 }
 
 /**

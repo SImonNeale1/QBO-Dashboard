@@ -810,11 +810,17 @@ apiRouter.get(
         makeSalesDiscountSummary(
           analysis
             .totals
-            .otherGross,
+            .otherGross +
+            analysis
+              .totals
+              .resellerGross,
 
           analysis
             .totals
-            .otherDiscount
+            .otherDiscount +
+            analysis
+              .totals
+              .resellerDiscount
         );
 
       const combined =
@@ -824,14 +830,20 @@ apiRouter.get(
             .advantageGross +
             analysis
               .totals
-              .otherGross,
+              .otherGross +
+            analysis
+              .totals
+              .resellerGross,
 
           analysis
             .totals
             .advantageDiscount +
             analysis
               .totals
-              .otherDiscount
+              .otherDiscount +
+            analysis
+              .totals
+              .resellerDiscount
         );
 
       res.json({
@@ -840,11 +852,7 @@ apiRouter.get(
         other,
         combined,
 
-        excludedFromDiscountCalculations: {
-          classification: 'reseller',
-          primaryClass: 'CGL',
-          fallbackCategory: 'RYCOTE Products'
-        }
+        resellerIncludedIn: 'other'
       });
     } catch (err) {
       handleError(res, err);
@@ -1647,6 +1655,8 @@ async function buildSalesAnalysis(
 
           _advantageGross: 0,
           _advantageDiscount: 0,
+          _resellerGross: 0,
+          _resellerDiscount: 0,
           _otherGross: 0,
           _otherDiscount: 0
         };
@@ -1771,8 +1781,9 @@ async function buildSalesAnalysis(
         );
 
       /*
-       * Reseller is excluded from
-       * discount percentage calculations.
+       * Reseller remains a separate category in the
+       * monthly sales table, but is included within
+       * Other products in the discount summary.
        */
       if (
         line.productGroup ===
@@ -1780,6 +1791,12 @@ async function buildSalesAnalysis(
       ) {
         month.resellerSales +=
           netSales;
+
+        month._resellerGross +=
+          line.grossAmount;
+
+        month._resellerDiscount +=
+          allocatedDiscount;
 
         continue;
       }
@@ -1816,6 +1833,8 @@ async function buildSalesAnalysis(
   const totals = {
     advantageGross: 0,
     advantageDiscount: 0,
+    resellerGross: 0,
+    resellerDiscount: 0,
     otherGross: 0,
     otherDiscount: 0
   };
@@ -1825,6 +1844,7 @@ async function buildSalesAnalysis(
   ) {
     month.totalSales =
       month.advantageSales +
+      month.resellerSales +
       month.otherSales;
 
     ytdAdvantage +=
@@ -1847,6 +1867,7 @@ async function buildSalesAnalysis(
 
     month.ytdTotal =
       ytdAdvantage +
+      ytdReseller +
       ytdOther;
 
     month.advDiscountPct =
@@ -1867,6 +1888,12 @@ async function buildSalesAnalysis(
     totals.advantageDiscount +=
       month._advantageDiscount;
 
+    totals.resellerGross +=
+      month._resellerGross;
+
+    totals.resellerDiscount +=
+      month._resellerDiscount;
+
     totals.otherGross +=
       month._otherGross;
 
@@ -1878,6 +1905,12 @@ async function buildSalesAnalysis(
 
     delete month
       ._advantageDiscount;
+
+    delete month
+      ._resellerGross;
+
+    delete month
+      ._resellerDiscount;
 
     delete month
       ._otherGross;

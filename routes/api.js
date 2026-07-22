@@ -699,7 +699,7 @@ apiRouter.get('/expenses', async (req, res) => {
  * 3. Stock-item category fallback: RYCOTE Products = Reseller; Advantage = Advantage
  * 4. Everything else = Other
  *
- * Reseller sales are excluded from discount calculations.
+ * Reseller sales are included within Other products for discount calculations.
  */
 
 /**
@@ -861,7 +861,7 @@ apiRouter.get(
 );
 
 /**
- * Temporary salesperson response.
+ * Salesperson discount analysis based on invoice billing postcode.
  *
  * GET /api/sales/salesperson?year=2026
  */
@@ -873,22 +873,202 @@ apiRouter.get(
         return;
       }
 
+      const year = normaliseSalesYear(req.query.year);
+      const analysis = await buildSalespersonAnalysis(req.qbo, year);
+
       res.json({
-        year:
-          normaliseSalesYear(
-            req.query.year
-          ),
-
-        salespeople: [],
-
-        status:
-          'Salesperson mapping not configured'
+        year,
+        salespeople: analysis.salespeople,
+        assignment: {
+          basis: 'Invoice billing postcode',
+          addressField: 'Invoice.BillAddr.PostalCode',
+          fallback: 'Derek receives postcode areas not listed for Andy or Sean',
+          territories: SALESPERSON_TERRITORIES
+        },
+        diagnostics: analysis.diagnostics
       });
     } catch (err) {
       handleError(res, err);
     }
   }
 );
+
+/**
+ * Editable salesperson territory map.
+ *
+ * Postcode areas are the letters at the start of a UK postcode, for example:
+ * BS1 4DJ -> BS, B12 8AA -> B, CF10 1AA -> CF.
+ *
+ * Wales is split by postcode area:
+ * Andy = CF and NP; Sean = SA, LL and SY.
+ * Any postcode area not listed for Andy or Sean is assigned to Derek.
+ */
+const SALESPERSON_TERRITORIES = {
+  Andy: {
+    region: 'South West · South East · Wales (CF, NP)',
+    postcodeAreas: [
+      'BA', 'BH', 'BN', 'BS', 'CF', 'CT', 'DA', 'DT', 'EX', 'GL',
+      'GU', 'ME', 'NP', 'OX', 'PL', 'PO', 'RG', 'RH', 'SN', 'SO',
+      'SP', 'TA', 'TN', 'TQ', 'TR'
+    ]
+  },
+  Sean: {
+    region: 'Midlands · Wales (SA, LL, SY)',
+    postcodeAreas: [
+      'B', 'CB', 'CV', 'DE', 'DY', 'HR', 'LE', 'LL', 'LN', 'LU',
+      'MK', 'NG', 'NN', 'NR', 'PE', 'SA', 'SG', 'ST', 'SY', 'TF',
+      'WR', 'WS', 'WV'
+    ]
+  },
+  Derek: {
+    region: 'North · Scotland · all remaining postcode areas',
+    postcodeAreas: []
+  }
+};
+
+async function buildSalespersonAnalysis(qbo, year) {
+  const startDate = `${year}-04-01`;
+  const endDate = `${year + 1}-03-31`;
+
+  const [invoices, items] = await Promise.all([
+    qboQueryAllSalesRecords(
+      qbo,
+      'Invoice',
+      `WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`
+    ),
+    qboQueryAllItems(qbo)
+  ]);
+
+  const itemIndex = new Map();
+  for (const item of items) {
+    itemIndex.set(String(item.Id), item);
+  }
+
+  const people = new Map(
+    Object.entries(SALESPERSON_TERRITORIES).map(([person, config]) => [
+      person,
+      {
+        person,
+        region: config.region,
+        advantageGross: 0,
+        advantageDiscount: 0,
+        otherGross: 0,
+        otherDiscount: 0,
+        invoiceCount: 0
+      }
+    ])
+  );
+
+  const diagnostics = {
+    invoicesRead: invoices.length,
+    invoicesIncluded: 0,
+    invoicesWithoutBillingPostcode: 0,
+    postcodeAreaCounts: {}
+  };
+
+  for (const invoice of invoices) {
+    const postcode = String(invoice?.BillAddr?.PostalCode || '').trim();
+    const postcodeArea = getUkPostcodeArea(postcode);
+    const personName = salespersonFromPostcodeArea(postcodeArea);
+    const person = people.get(personName);
+
+    if (!postcodeArea) {
+      diagnostics.invoicesWithoutBillingPostcode += 1;
+    } else {
+      diagnostics.postcodeAreaCounts[postcodeArea] =
+        (diagnostics.postcodeAreaCounts[postcodeArea] || 0) + 1;
+    }
+
+    const salesLines = flattenInvoiceSalesLines(invoice.Line)
+      .map(line => ({
+        grossAmount: Math.max(0, safeNum(line.Amount)),
+        productGroup: classifySalesLine(invoice, line, itemIndex)
+      }))
+      .filter(line => line.grossAmount > 0);
+
+    const invoiceGross = salesLines.reduce(
+      (total, line) => total + line.grossAmount,
+      0
+    );
+
+    if (invoiceGross <= 0) continue;
+
+    diagnostics.invoicesIncluded += 1;
+    person.invoiceCount += 1;
+
+    const invoiceDiscount = Math.min(
+      getQuickBooksInvoiceDiscount(invoice),
+      invoiceGross
+    );
+
+    for (const line of salesLines) {
+      const allocatedDiscount =
+        invoiceDiscount * (line.grossAmount / invoiceGross);
+
+      if (line.productGroup === 'advantage') {
+        person.advantageGross += line.grossAmount;
+        person.advantageDiscount += allocatedDiscount;
+      } else {
+        // Other Products includes both ordinary Other and Reseller/CGL.
+        person.otherGross += line.grossAmount;
+        person.otherDiscount += allocatedDiscount;
+      }
+    }
+  }
+
+  const salespeople = Array.from(people.values()).map(person => {
+    const advantage = makeSalesDiscountSummary(
+      person.advantageGross,
+      person.advantageDiscount
+    );
+
+    const other = makeSalesDiscountSummary(
+      person.otherGross,
+      person.otherDiscount
+    );
+
+    const overall = makeSalesDiscountSummary(
+      person.advantageGross + person.otherGross,
+      person.advantageDiscount + person.otherDiscount
+    );
+
+    return {
+      person: person.person,
+      region: person.region,
+      invoiceCount: person.invoiceCount,
+      advantage,
+      other,
+      overall
+    };
+  });
+
+  return { salespeople, diagnostics };
+}
+
+function getUkPostcodeArea(postcode) {
+  const compact = String(postcode || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+
+  const match = compact.match(/^([A-Z]{1,2})\d/);
+  return match ? match[1] : '';
+}
+
+function salespersonFromPostcodeArea(postcodeArea) {
+  const area = String(postcodeArea || '').toUpperCase();
+
+  for (const personName of ['Andy', 'Sean']) {
+    if (
+      SALESPERSON_TERRITORIES[personName]
+        .postcodeAreas
+        .includes(area)
+    ) {
+      return personName;
+    }
+  }
+
+  return 'Derek';
+}
 
 /**
  * Category classification diagnostics.
@@ -1878,8 +2058,10 @@ async function buildSalesAnalysis(
 
     month.otherDiscountPct =
       calculateSalesPercentage(
-        month._otherDiscount,
-        month._otherGross
+        month._otherDiscount +
+          month._resellerDiscount,
+        month._otherGross +
+          month._resellerGross
       );
 
     totals.advantageGross +=

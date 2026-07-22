@@ -694,24 +694,13 @@ apiRouter.get('/expenses', async (req, res) => {
 /**
  * Sales dashboard
  *
- * Classification priority:
- * 1. Reseller customer
- * 2. Advantage product
- * 3. Other product
- *
- * Resellers:
- * - Alltimes Products
- * - CGL
- * - Garland
+ * Classification priority for each invoice line:
+ * 1. Reseller = item category "Rycote Sales" and class "CGL"
+ * 2. Advantage = item category "Advantage" and class "Advantage Products"
+ * 3. Everything else = Other
  *
  * Reseller sales are excluded from discount calculations.
  */
-
-const RESELLER_CUSTOMERS = new Set([
-  'alltimes products',
-  'cgl',
-  'garland'
-]);
 
 /**
  * Monthly sales
@@ -722,19 +711,40 @@ apiRouter.get('/sales/monthly', async (req, res) => {
   try {
     if (!ensureQBO(req, res)) return;
 
-    const year = normaliseSalesYear(req.query.year);
-    const analysis = await buildSalesAnalysis(req.qbo, year);
+    const year =
+      normaliseSalesYear(
+        req.query.year
+      );
+
+    const analysis =
+      await buildSalesAnalysis(
+        req.qbo,
+        year
+      );
 
     res.json({
       year,
-      startDate: `${year}-04-01`,
-      endDate: `${year + 1}-03-31`,
-      months: analysis.months,
-      resellerCustomers: [
-        'Alltimes Products',
-        'CGL',
-        'Garland'
-      ]
+
+      startDate:
+        `${year}-04-01`,
+
+      endDate:
+        `${year + 1}-03-31`,
+
+      months:
+        analysis.months,
+
+      classificationRules: {
+        reseller: {
+          category: 'Rycote Sales',
+          class: 'CGL'
+        },
+
+        advantage: {
+          category: 'Advantage',
+          class: 'Advantage Products'
+        }
+      }
     });
   } catch (err) {
     handleError(res, err);
@@ -746,69 +756,110 @@ apiRouter.get('/sales/monthly', async (req, res) => {
  *
  * GET /api/sales/discount-summary?year=2026
  */
-apiRouter.get('/sales/discount-summary', async (req, res) => {
-  try {
-    if (!ensureQBO(req, res)) return;
+apiRouter.get(
+  '/sales/discount-summary',
+  async (req, res) => {
+    try {
+      if (!ensureQBO(req, res)) {
+        return;
+      }
 
-    const year = normaliseSalesYear(req.query.year);
-    const analysis = await buildSalesAnalysis(req.qbo, year);
+      const year =
+        normaliseSalesYear(
+          req.query.year
+        );
 
-    const advantage = makeSalesDiscountSummary(
-      analysis.totals.advantageGross,
-      analysis.totals.advantageDiscount
-    );
+      const analysis =
+        await buildSalesAnalysis(
+          req.qbo,
+          year
+        );
 
-    const other = makeSalesDiscountSummary(
-      analysis.totals.otherGross,
-      analysis.totals.otherDiscount
-    );
+      const advantage =
+        makeSalesDiscountSummary(
+          analysis
+            .totals
+            .advantageGross,
 
-    const combined = makeSalesDiscountSummary(
-      analysis.totals.advantageGross +
-        analysis.totals.otherGross,
+          analysis
+            .totals
+            .advantageDiscount
+        );
 
-      analysis.totals.advantageDiscount +
-        analysis.totals.otherDiscount
-    );
+      const other =
+        makeSalesDiscountSummary(
+          analysis
+            .totals
+            .otherGross,
 
-    res.json({
-      year,
-      advantage,
-      other,
-      combined,
+          analysis
+            .totals
+            .otherDiscount
+        );
 
-      excludedFromDiscountCalculations: [
-        'Alltimes Products',
-        'CGL',
-        'Garland'
-      ]
-    });
-  } catch (err) {
-    handleError(res, err);
+      const combined =
+        makeSalesDiscountSummary(
+          analysis
+            .totals
+            .advantageGross +
+            analysis
+              .totals
+              .otherGross,
+
+          analysis
+            .totals
+            .advantageDiscount +
+            analysis
+              .totals
+              .otherDiscount
+        );
+
+      res.json({
+        year,
+        advantage,
+        other,
+        combined,
+
+        excludedFromDiscountCalculations: {
+          category: 'Rycote Sales',
+          class: 'CGL'
+        }
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
   }
-});
+);
 
 /**
  * Temporary salesperson response.
  *
- * This prevents the dashboard receiving a 404 while we confirm
- * where the salesperson is recorded in QuickBooks.
- *
  * GET /api/sales/salesperson?year=2026
  */
-apiRouter.get('/sales/salesperson', async (req, res) => {
-  try {
-    if (!ensureQBO(req, res)) return;
+apiRouter.get(
+  '/sales/salesperson',
+  async (req, res) => {
+    try {
+      if (!ensureQBO(req, res)) {
+        return;
+      }
 
-    res.json({
-      year: normaliseSalesYear(req.query.year),
-      salespeople: [],
-      status: 'Salesperson mapping not configured'
-    });
-  } catch (err) {
-    handleError(res, err);
+      res.json({
+        year:
+          normaliseSalesYear(
+            req.query.year
+          ),
+
+        salespeople: [],
+
+        status:
+          'Salesperson mapping not configured'
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
   }
-});
+);
 
 /**
  * Build the live sales analysis from QuickBooks invoices and items.
@@ -874,11 +925,8 @@ async function buildSalesAnalysis(
   let monthCount = 12;
 
   /*
-   * For the current financial year, only
-   * display months reached so far.
-   *
-   * July therefore shows:
-   * April, May, June and July.
+   * For the current financial year,
+   * only display months reached so far.
    */
   if (
     currentDate >=
@@ -917,6 +965,7 @@ async function buildSalesAnalysis(
       {
         length: monthCount
       },
+
       (
         _,
         financialMonthIndex
@@ -930,10 +979,6 @@ async function buildSalesAnalysis(
           );
 
         return {
-          /*
-           * Calendar month number:
-           * April = 4, January = 1.
-           */
           month:
             monthDate.getMonth() +
             1,
@@ -993,11 +1038,8 @@ async function buildSalesAnalysis(
     }
 
     /*
-     * Convert calendar month into
-     * financial-year month index:
-     *
      * April = 0
-     * May   = 1
+     * May = 1
      * ...
      * March = 11
      */
@@ -1014,26 +1056,9 @@ async function buildSalesAnalysis(
         financialMonthIndex
       ];
 
-    /*
-     * This excludes future months from
-     * the current financial-year display.
-     */
     if (!month) {
       continue;
     }
-
-    const customerName =
-      String(
-        invoice
-          .CustomerRef
-          ?.name || ''
-      ).trim();
-
-    const isReseller =
-      RESELLER_CUSTOMERS.has(
-        customerName
-          .toLowerCase()
-      );
 
     const salesLines =
       (
@@ -1057,24 +1082,15 @@ async function buildSalesAnalysis(
               )
             );
 
-          const itemId =
-            String(
-              line
-                .SalesItemLineDetail
-                ?.ItemRef
-                ?.value || ''
-            );
-
           return {
             grossAmount,
 
             productGroup:
-              isAdvantageStockItem(
-                itemId,
+              classifySalesLine(
+                invoice,
+                line,
                 itemIndex
               )
-                ? 'advantage'
-                : 'other'
           };
         })
         .filter(
@@ -1127,10 +1143,13 @@ async function buildSalesAnalysis(
         );
 
       /*
-       * Reseller classification takes
-       * priority over product category.
+       * Reseller is excluded from
+       * discount percentage calculations.
        */
-      if (isReseller) {
+      if (
+        line.productGroup ===
+        'reseller'
+      ) {
         month.resellerSales +=
           netSales;
 
@@ -1248,6 +1267,7 @@ async function buildSalesAnalysis(
     endDate
   };
 }
+
 /**
  * Read every available QuickBooks page.
  */
@@ -1271,10 +1291,11 @@ async function qboQueryAllSalesRecords(
       .filter(Boolean)
       .join(' ');
 
-    const response = await qboQuery(
-      qbo,
-      query
-    );
+    const response =
+      await qboQuery(
+        qbo,
+        query
+      );
 
     const page =
       response.QueryResponse?.[
@@ -1283,56 +1304,85 @@ async function qboQueryAllSalesRecords(
 
     results.push(...page);
 
-    if (page.length < pageSize) {
+    if (
+      page.length <
+      pageSize
+    ) {
       break;
     }
 
-    startPosition += pageSize;
+    startPosition +=
+      pageSize;
   }
 
   return results;
 }
 
 /**
- * Determine whether an item belongs to the Advantage category.
- *
- * QuickBooks categories are represented through parent/sub-item
- * relationships and FullyQualifiedName values.
+ * Normalise QuickBooks category and class names.
  */
-function isAdvantageStockItem(
+function normaliseClassificationName(
+  value
+) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/&amp;/g, '&')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Determine whether an item belongs to
+ * a specified QuickBooks category.
+ */
+function itemHasCategory(
   itemId,
-  itemIndex
+  itemIndex,
+  requiredCategory
 ) {
   let item =
-    itemIndex.get(String(itemId));
+    itemIndex.get(
+      String(itemId)
+    );
 
-  const visited = new Set();
+  const wanted =
+    normaliseClassificationName(
+      requiredCategory
+    );
+
+  const visited =
+    new Set();
 
   while (
     item &&
-    !visited.has(String(item.Id))
-  ) {
-    visited.add(String(item.Id));
-
-    const name = String(
-      item.Name || ''
+    !visited.has(
+      String(item.Id)
     )
-      .trim()
-      .toLowerCase();
+  ) {
+    visited.add(
+      String(item.Id)
+    );
+
+    const name =
+      normaliseClassificationName(
+        item.Name
+      );
 
     const fullyQualifiedName =
-      String(
-        item.FullyQualifiedName || ''
-      )
-        .trim()
-        .toLowerCase();
+      normaliseClassificationName(
+        item.FullyQualifiedName
+      );
 
     if (
-      name === 'advantage' ||
+      name === wanted ||
       fullyQualifiedName ===
-        'advantage' ||
+        wanted ||
       fullyQualifiedName.startsWith(
-        'advantage:'
+        `${wanted} `
+      ) ||
+      fullyQualifiedName.includes(
+        ` ${wanted} `
       )
     ) {
       return true;
@@ -1343,17 +1393,104 @@ function isAdvantageStockItem(
       item.ParentRef;
 
     if (!parentId) {
-      item = null;
-      continue;
+      break;
     }
 
-    item = itemIndex.get(
-      String(parentId)
-    );
+    item =
+      itemIndex.get(
+        String(parentId)
+      );
   }
 
   return false;
 }
+
+/**
+ * Read the class from the invoice line.
+ * Invoice-level class is used as a fallback.
+ */
+function getInvoiceLineClassName(
+  invoice,
+  line
+) {
+  return String(
+    line
+      ?.SalesItemLineDetail
+      ?.ClassRef
+      ?.name ||
+
+    line
+      ?.ClassRef
+      ?.name ||
+
+    invoice
+      ?.ClassRef
+      ?.name ||
+
+    ''
+  ).trim();
+}
+
+/**
+ * Classify one invoice sales line.
+ */
+function classifySalesLine(
+  invoice,
+  line,
+  itemIndex
+) {
+  const itemId =
+    String(
+      line
+        ?.SalesItemLineDetail
+        ?.ItemRef
+        ?.value || ''
+    );
+
+  const className =
+    normaliseClassificationName(
+      getInvoiceLineClassName(
+        invoice,
+        line
+      )
+    );
+
+  /*
+   * Reseller:
+   * Category = Rycote Sales
+   * Class = CGL
+   */
+  if (
+    itemHasCategory(
+      itemId,
+      itemIndex,
+      'Rycote Sales'
+    ) &&
+    className === 'cgl'
+  ) {
+    return 'reseller';
+  }
+
+  /*
+   * Advantage:
+   * Category = Advantage
+   * Class = Advantage Products
+   */
+  if (
+    itemHasCategory(
+      itemId,
+      itemIndex,
+      'Advantage'
+    ) &&
+    className ===
+      'advantage products'
+  ) {
+    return 'advantage';
+  }
+
+  return 'other';
+}
+
 
 /**
  * Read the discount recorded on the invoice.

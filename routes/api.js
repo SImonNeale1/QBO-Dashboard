@@ -692,6 +692,643 @@ apiRouter.get('/expenses', async (req, res) => {
 });
 
 /**
+ * Sales dashboard
+ *
+ * Classification priority:
+ * 1. Reseller customer
+ * 2. Advantage product
+ * 3. Other product
+ *
+ * Resellers:
+ * - Alltimes Products
+ * - CGL
+ * - Garland
+ *
+ * Reseller sales are excluded from discount calculations.
+ */
+
+const RESELLER_CUSTOMERS = new Set([
+  'alltimes products',
+  'cgl',
+  'garland'
+]);
+
+/**
+ * Monthly sales
+ *
+ * GET /api/sales/monthly?year=2026
+ */
+apiRouter.get('/sales/monthly', async (req, res) => {
+  try {
+    if (!ensureQBO(req, res)) return;
+
+    const year = normaliseSalesYear(req.query.year);
+    const analysis = await buildSalesAnalysis(req.qbo, year);
+
+    res.json({
+      year,
+      startDate: `${year}-01-01`,
+      endDate: `${year}-12-31`,
+      months: analysis.months,
+      resellerCustomers: [
+        'Alltimes Products',
+        'CGL',
+        'Garland'
+      ]
+    });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+/**
+ * Overall discount summary
+ *
+ * GET /api/sales/discount-summary?year=2026
+ */
+apiRouter.get('/sales/discount-summary', async (req, res) => {
+  try {
+    if (!ensureQBO(req, res)) return;
+
+    const year = normaliseSalesYear(req.query.year);
+    const analysis = await buildSalesAnalysis(req.qbo, year);
+
+    const advantage = makeSalesDiscountSummary(
+      analysis.totals.advantageGross,
+      analysis.totals.advantageDiscount
+    );
+
+    const other = makeSalesDiscountSummary(
+      analysis.totals.otherGross,
+      analysis.totals.otherDiscount
+    );
+
+    const combined = makeSalesDiscountSummary(
+      analysis.totals.advantageGross +
+        analysis.totals.otherGross,
+
+      analysis.totals.advantageDiscount +
+        analysis.totals.otherDiscount
+    );
+
+    res.json({
+      year,
+      advantage,
+      other,
+      combined,
+
+      excludedFromDiscountCalculations: [
+        'Alltimes Products',
+        'CGL',
+        'Garland'
+      ]
+    });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+/**
+ * Temporary salesperson response.
+ *
+ * This prevents the dashboard receiving a 404 while we confirm
+ * where the salesperson is recorded in QuickBooks.
+ *
+ * GET /api/sales/salesperson?year=2026
+ */
+apiRouter.get('/sales/salesperson', async (req, res) => {
+  try {
+    if (!ensureQBO(req, res)) return;
+
+    res.json({
+      year: normaliseSalesYear(req.query.year),
+      salespeople: [],
+      status: 'Salesperson mapping not configured'
+    });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+/**
+ * Build the live sales analysis from QuickBooks invoices and items.
+ */
+async function buildSalesAnalysis(qbo, year) {
+  const startDate = `${year}-01-01`;
+  const endDate = `${year}-12-31`;
+
+  const [invoices, items] = await Promise.all([
+    qboQueryAllSalesRecords(
+      qbo,
+      'Invoice',
+      `WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`
+    ),
+
+    qboQueryAllSalesRecords(
+      qbo,
+      'Item'
+    )
+  ]);
+
+  const itemIndex = new Map();
+
+  for (const item of items) {
+    itemIndex.set(
+      String(item.Id),
+      item
+    );
+  }
+
+  const currentDate = new Date();
+  const currentYear = currentDate.getFullYear();
+
+  const monthCount =
+    year < currentYear
+      ? 12
+      : Math.min(
+          currentDate.getMonth() + 1,
+          12
+        );
+
+  const months = Array.from(
+    { length: monthCount },
+    (_, monthIndex) => ({
+      month: monthIndex + 1,
+
+      label: new Date(
+        year,
+        monthIndex,
+        1
+      ).toLocaleDateString('en-GB', {
+        month: 'short'
+      }),
+
+      advantageSales: 0,
+      resellerSales: 0,
+      otherSales: 0,
+      totalSales: 0,
+
+      ytdAdvantage: 0,
+      ytdReseller: 0,
+      ytdOther: 0,
+      ytdTotal: 0,
+
+      advDiscountPct: 0,
+      otherDiscountPct: 0,
+
+      _advantageGross: 0,
+      _advantageDiscount: 0,
+      _otherGross: 0,
+      _otherDiscount: 0
+    })
+  );
+
+  for (const invoice of invoices) {
+    const invoiceDate = parseQuickBooksDate(
+      invoice.TxnDate
+    );
+
+    if (!invoiceDate) continue;
+
+    if (
+      invoiceDate.getFullYear() !== year
+    ) {
+      continue;
+    }
+
+    const month =
+      months[invoiceDate.getMonth()];
+
+    if (!month) continue;
+
+    const customerName = String(
+      invoice.CustomerRef?.name || ''
+    ).trim();
+
+    const isReseller =
+      RESELLER_CUSTOMERS.has(
+        customerName.toLowerCase()
+      );
+
+    const salesLines = (
+      Array.isArray(invoice.Line)
+        ? invoice.Line
+        : []
+    )
+      .filter(
+        line =>
+          line.DetailType ===
+          'SalesItemLineDetail'
+      )
+      .map(line => {
+        const grossAmount = Math.max(
+          0,
+          safeNum(line.Amount)
+        );
+
+        const itemId = String(
+          line
+            .SalesItemLineDetail
+            ?.ItemRef
+            ?.value || ''
+        );
+
+        return {
+          grossAmount,
+
+          productGroup:
+            isAdvantageStockItem(
+              itemId,
+              itemIndex
+            )
+              ? 'advantage'
+              : 'other'
+        };
+      })
+      .filter(
+        line => line.grossAmount > 0
+      );
+
+    const invoiceGross =
+      salesLines.reduce(
+        (total, line) =>
+          total + line.grossAmount,
+        0
+      );
+
+    if (invoiceGross <= 0) continue;
+
+    const invoiceDiscount = Math.min(
+      getQuickBooksInvoiceDiscount(invoice),
+      invoiceGross
+    );
+
+    for (const line of salesLines) {
+      const allocatedDiscount =
+        invoiceDiscount *
+        (
+          line.grossAmount /
+          invoiceGross
+        );
+
+      const netSales = Math.max(
+        0,
+        line.grossAmount -
+          allocatedDiscount
+      );
+
+      /*
+       * Reseller takes priority over product category.
+       *
+       * An Advantage product sold to a reseller appears only
+       * in the Reseller Sales column.
+       */
+      if (isReseller) {
+        month.resellerSales += netSales;
+        continue;
+      }
+
+      if (
+        line.productGroup ===
+        'advantage'
+      ) {
+        month.advantageSales +=
+          netSales;
+
+        month._advantageGross +=
+          line.grossAmount;
+
+        month._advantageDiscount +=
+          allocatedDiscount;
+      } else {
+        month.otherSales +=
+          netSales;
+
+        month._otherGross +=
+          line.grossAmount;
+
+        month._otherDiscount +=
+          allocatedDiscount;
+      }
+    }
+  }
+
+  let ytdAdvantage = 0;
+  let ytdReseller = 0;
+  let ytdOther = 0;
+
+  const totals = {
+    advantageGross: 0,
+    advantageDiscount: 0,
+    otherGross: 0,
+    otherDiscount: 0
+  };
+
+  for (const month of months) {
+    month.totalSales =
+      month.advantageSales +
+      month.resellerSales +
+      month.otherSales;
+
+    ytdAdvantage +=
+      month.advantageSales;
+
+    ytdReseller +=
+      month.resellerSales;
+
+    ytdOther +=
+      month.otherSales;
+
+    month.ytdAdvantage =
+      ytdAdvantage;
+
+    month.ytdReseller =
+      ytdReseller;
+
+    month.ytdOther =
+      ytdOther;
+
+    month.ytdTotal =
+      ytdAdvantage +
+      ytdReseller +
+      ytdOther;
+
+    month.advDiscountPct =
+      calculateSalesPercentage(
+        month._advantageDiscount,
+        month._advantageGross
+      );
+
+    month.otherDiscountPct =
+      calculateSalesPercentage(
+        month._otherDiscount,
+        month._otherGross
+      );
+
+    totals.advantageGross +=
+      month._advantageGross;
+
+    totals.advantageDiscount +=
+      month._advantageDiscount;
+
+    totals.otherGross +=
+      month._otherGross;
+
+    totals.otherDiscount +=
+      month._otherDiscount;
+
+    delete month._advantageGross;
+    delete month._advantageDiscount;
+    delete month._otherGross;
+    delete month._otherDiscount;
+  }
+
+  return {
+    months,
+    totals
+  };
+}
+
+/**
+ * Read every available QuickBooks page.
+ */
+async function qboQueryAllSalesRecords(
+  qbo,
+  entityName,
+  whereClause = ''
+) {
+  const results = [];
+
+  const pageSize = 1000;
+  let startPosition = 1;
+
+  while (true) {
+    const query = [
+      `SELECT * FROM ${entityName}`,
+      whereClause,
+      `STARTPOSITION ${startPosition}`,
+      `MAXRESULTS ${pageSize}`
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    const response = await qboQuery(
+      qbo,
+      query
+    );
+
+    const page =
+      response.QueryResponse?.[
+        entityName
+      ] || [];
+
+    results.push(...page);
+
+    if (page.length < pageSize) {
+      break;
+    }
+
+    startPosition += pageSize;
+  }
+
+  return results;
+}
+
+/**
+ * Determine whether an item belongs to the Advantage category.
+ *
+ * QuickBooks categories are represented through parent/sub-item
+ * relationships and FullyQualifiedName values.
+ */
+function isAdvantageStockItem(
+  itemId,
+  itemIndex
+) {
+  let item =
+    itemIndex.get(String(itemId));
+
+  const visited = new Set();
+
+  while (
+    item &&
+    !visited.has(String(item.Id))
+  ) {
+    visited.add(String(item.Id));
+
+    const name = String(
+      item.Name || ''
+    )
+      .trim()
+      .toLowerCase();
+
+    const fullyQualifiedName =
+      String(
+        item.FullyQualifiedName || ''
+      )
+        .trim()
+        .toLowerCase();
+
+    if (
+      name === 'advantage' ||
+      fullyQualifiedName ===
+        'advantage' ||
+      fullyQualifiedName.startsWith(
+        'advantage:'
+      )
+    ) {
+      return true;
+    }
+
+    const parentId =
+      item.ParentRef?.value ||
+      item.ParentRef;
+
+    if (!parentId) {
+      item = null;
+      continue;
+    }
+
+    item = itemIndex.get(
+      String(parentId)
+    );
+  }
+
+  return false;
+}
+
+/**
+ * Read the discount recorded on the invoice.
+ */
+function getQuickBooksInvoiceDiscount(
+  invoice
+) {
+  const lines = Array.isArray(
+    invoice.Line
+  )
+    ? invoice.Line
+    : [];
+
+  return lines
+    .filter(
+      line =>
+        line.DetailType ===
+        'DiscountLineDetail'
+    )
+    .reduce((total, line) => {
+      const amount = Math.abs(
+        safeNum(line.Amount)
+      );
+
+      if (amount > 0) {
+        return total + amount;
+      }
+
+      const discountPercent =
+        safeNum(
+          line
+            .DiscountLineDetail
+            ?.DiscountPercent
+        );
+
+      if (discountPercent <= 0) {
+        return total;
+      }
+
+      /*
+       * Fallback for a percentage discount line where QBO
+       * does not return a line Amount.
+       */
+      const netInvoiceTotal = Math.max(
+        0,
+        safeNum(invoice.TotalAmt)
+      );
+
+      const preDiscountValue =
+        netInvoiceTotal /
+        Math.max(
+          0.0001,
+          1 -
+            discountPercent / 100
+        );
+
+      return (
+        total +
+        (
+          preDiscountValue -
+          netInvoiceTotal
+        )
+      );
+    }, 0);
+}
+
+function makeSalesDiscountSummary(
+  grossSales,
+  discountAmount
+) {
+  return {
+    sales: Math.max(
+      0,
+      grossSales - discountAmount
+    ),
+
+    grossSales,
+    discountAmount,
+
+    discountPct:
+      calculateSalesPercentage(
+        discountAmount,
+        grossSales
+      )
+  };
+}
+
+function calculateSalesPercentage(
+  numerator,
+  denominator
+) {
+  if (denominator <= 0) {
+    return 0;
+  }
+
+  return (
+    numerator /
+    denominator
+  ) * 100;
+}
+
+function parseQuickBooksDate(value) {
+  if (!value) return null;
+
+  const date = new Date(
+    `${value}T00:00:00`
+  );
+
+  return Number.isNaN(
+    date.getTime()
+  )
+    ? null
+    : date;
+}
+
+function normaliseSalesYear(value) {
+  const currentYear =
+    new Date().getFullYear();
+
+  const requestedYear =
+    Number.parseInt(value, 10);
+
+  if (
+    Number.isInteger(requestedYear) &&
+    requestedYear >= 2000 &&
+    requestedYear <= currentYear + 1
+  ) {
+    return requestedYear;
+  }
+
+  return currentYear;
+}
+
+/**
  * Helpers
  */
 function today() {

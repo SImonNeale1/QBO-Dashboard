@@ -585,11 +585,13 @@ function renderBvaYtd(){
   const adjustments=adjustmentSet('ytd');
   const actualSource={
     revenue:plData?.revenue ?? bvaData.bva.revenue?.actual ?? 0,
-    costOfSales:plData?.costOfSales ?? bvaData.bva.costOfSales?.actual ?? 0,
-    expenses:plData?.expenses ?? bvaData.bva.expenses?.actual ?? 0
+    costOfSales:plData?.costOfSales ?? bvaData.bva.costOfSales?.actual ?? 0
   };
   actualSource.grossProfit=actualSource.revenue-actualSource.costOfSales;
-  actualSource.netIncome=actualSource.grossProfit-actualSource.expenses;
+  actualSource.netIncome=plData?.netIncome ?? bvaData.bva.netIncome?.actual ?? 0;
+  // Expenses is the complete amount below gross profit, including depreciation
+  // and interest earned, so it reconciles exactly to QuickBooks net profit.
+  actualSource.expenses=actualSource.grossProfit-actualSource.netIncome;
 
   document.getElementById('bva-ytd-body').innerHTML=BVA_LINES.map(line=>{
     const base=bvaData.bva[line.key]||{actual:0,budget:0};
@@ -657,17 +659,21 @@ function renderBvaMonth(){
 
   const revenueActual=Number(monthData.revenue?.actual)||0;
   const cosActual=Number(monthData.costOfSales?.actual)||0;
-  const expensesActual=Number(monthData.expenses?.actual)||0;
+  const grossProfitActual=revenueActual-cosActual;
+  const netIncomeActual=Number(monthData.netIncome?.actual)||0;
+  const expensesActual=grossProfitActual-netIncomeActual;
   const revenueBudget=Number(monthData.revenue?.budget)||0;
   const cosBudget=Number(monthData.costOfSales?.budget)||0;
-  const expensesBudget=Number(monthData.expenses?.budget)||0;
+  const grossProfitBudget=revenueBudget-cosBudget;
+  const netIncomeBudget=Number(monthData.netIncome?.budget)||0;
+  const expensesBudget=grossProfitBudget-netIncomeBudget;
 
   const calculated={
     revenue:{actual:revenueActual,budget:revenueBudget},
     costOfSales:{actual:cosActual,budget:cosBudget},
-    grossProfit:{actual:revenueActual-cosActual,budget:revenueBudget-cosBudget},
+    grossProfit:{actual:grossProfitActual,budget:grossProfitBudget},
     expenses:{actual:expensesActual,budget:expensesBudget},
-    netIncome:{actual:revenueActual-cosActual-expensesActual,budget:revenueBudget-cosBudget-expensesBudget}
+    netIncome:{actual:netIncomeActual,budget:netIncomeBudget}
   };
 
   body.innerHTML=BVA_LINES.map(line=>{
